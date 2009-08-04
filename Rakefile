@@ -13,7 +13,7 @@ CLEAN.include(classes, target)
 
 task :compile => classes do
  src_files = FileList['src/**/*.java']
- sh "javac", '-target', '1.5', '-d', classes, '-classpath', libs, *src_files
+ sh "javac", '-target', '1.6', '-d', classes, '-classpath', libs, *src_files
 end
 
 desc "run jotify"
