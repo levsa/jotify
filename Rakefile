@@ -25,3 +25,8 @@ desc "creates #{jotify_jar}"
 task :jar => [:compile, target] do
   sh "jar cf #{jotify_jar} -C classes ."
 end
+
+desc "runs the gateway application"
+task :gateway => [:compile] do
+  sh "java -classpath src:#{classes}:#{libs} de.felixbruns.jotify.gateway.GatewayApplication"
+end
