@@ -253,6 +253,11 @@ public class JotifyConnection implements Jotify, CommandListener {
 		/* Get data and inflate it. */
 		byte[] data = GZIP.inflate(callback.get(this.timeout, this.unit));
 		
+		if (data.length == 0) {
+		  // not sure what this means - treat is empty result
+		  return new Result();
+		}
+		
 		/* Cut off that last 0xFF byte... */
 		data = Arrays.copyOfRange(data, 0, data.length - 1);
 		
