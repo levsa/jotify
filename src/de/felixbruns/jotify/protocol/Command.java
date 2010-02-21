@@ -10,6 +10,7 @@ public class Command {
 	public static final int COMMAND_CHANNELABRT  = 0x0b;
 	public static final int COMMAND_REQKEY       = 0x0c;
 	public static final int COMMAND_AESKEY       = 0x0d;
+	public static final int COMMAND_AESKEYERR    = 0x0e;
 	public static final int COMMAND_CACHEHASH    = 0x0f;
 	public static final int COMMAND_SHAHASH      = 0x10;
 	public static final int COMMAND_IMAGE        = 0x19;
@@ -23,11 +24,12 @@ public class Command {
 	public static final int COMMAND_P2P_INITBLK = 0x21;
 	
 	/* Search and metadata. */
-	public static final int COMMAND_BROWSE         = 0x30;
-	public static final int COMMAND_SEARCH         = 0x31;
-	public static final int COMMAND_GETPLAYLIST    = 0x35;
-	public static final int COMMAND_CHANGEPLAYLIST = 0x36;
-	public static final int COMMAND_GETTOPLIST     = 0x38;
+	public static final int COMMAND_BROWSE          = 0x30;
+	public static final int COMMAND_SEARCH          = 0x31;
+	public static final int COMMAND_PLAYLISTCHANGED = 0x34;
+	public static final int COMMAND_GETPLAYLIST     = 0x35;
+	public static final int COMMAND_CHANGEPLAYLIST  = 0x36;
+	public static final int COMMAND_GETTOPLIST      = 0x38;
 	
 	/* Session management. */
 	public static final int COMMAND_NOTIFY      = 0x42;

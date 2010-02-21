@@ -4,8 +4,6 @@ import java.util.ArrayList;
 import java.util.List;
 
 import de.felixbruns.jotify.util.Hex;
-import de.felixbruns.jotify.util.SpotifyURI;
-import de.felixbruns.jotify.util.XMLElement;
 
 /**
  * Holds information about an album.
@@ -74,7 +72,7 @@ public class Album extends Media {
 	/**
 	 * Creates an {@link Album} object with the specified {@code id}.
 	 * 
-	 * @param id Id of the album.
+	 * @param id A 32-character hex string or a Spotify URI.
 	 */
 	public Album(String id){
 		this(id, null, null);
@@ -83,7 +81,7 @@ public class Album extends Media {
 	/**
 	 * Creates an {@link Album} object with the specified {@code id}, {@code name} and {@code artist}.
 	 * 
-	 * @param id     Id of the album.
+	 * @param id     A 32-character hex string or a Spotify URI.
 	 * @param name   Name of the album.
 	 * @param artist Artist of the album.
 	 */
@@ -102,21 +100,13 @@ public class Album extends Media {
 	}
 	
 	/**
-	 * Get the albums Spotify URI.
+	 * Create a link from this album.
 	 * 
-	 * @return A Spotify URI (e.g. {@code spotify:album:<base62-encoded-id>})
+	 * @return A {@link Link} object which can then
+	 * 		   be used to retreive the Spotify URI.
 	 */
-	public String getURI(){
-		return "spotify:album:" + SpotifyURI.toURI(this.id);
-	}
-	
-	/**
-	 * Get the albums Spotify URI as a HTTP-link.
-	 * 
-	 * @return A link which redirects to a Spotify URI.
-	 */
-	public String getLink(){
-		return "http://open.spotify.com/album/" + SpotifyURI.toURI(this.id);
+	public Link getLink(){
+		return Link.create(this);
 	}
 	
 	/**
@@ -299,88 +289,6 @@ public class Album extends Media {
 	}
 	
 	/**
-	 * Create an {@link Album} object from an {@link XMLElement} holding album information.
-	 * 
-	 * @param albumElement An {@link XMLElement} holding album information.
-	 * 
-	 * @return An {@link Album} object.
-	 */
-	public static Album fromXMLElement(XMLElement albumElement){
-		/* Create an empty album object. */
-		Album album = new Album();
-		
-		/* Set identifier. */
-		if(albumElement.hasChild("id")){
-			album.id = albumElement.getChildText("id");
-		}
-		
-		/* Set name. */
-		if(albumElement.hasChild("name")){
-			album.name = albumElement.getChildText("name");
-		}
-		
-		/* Set artist. */
-		if(albumElement.hasChild("artist-id") && (albumElement.hasChild("artist") || albumElement.hasChild("artist-name"))){
-			album.artist = new Artist(
-				albumElement.getChildText("artist-id"),
-				albumElement.hasChild("artist")?
-					albumElement.getChildText("artist"):
-					albumElement.getChildText("artist-name")
-			);
-		}
-		
-		/* Set cover. */
-		if(albumElement.hasChild("cover")){
-			String value = albumElement.getChildText("cover");
-			
-			if(!value.isEmpty()){
-				album.cover = value;
-			}
-		}
-		
-		/* Set year. */
-		if(albumElement.hasChild("year")){
-			album.year = Integer.parseInt(albumElement.getChildText("year"));
-		}
-		
-		/* Set popularity. */
-		if(albumElement.hasChild("popularity")){
-			album.popularity = Float.parseFloat(albumElement.getChildText("popularity"));
-		}
-		
-		/* Set tracks. */
-		if(albumElement.hasChild("discs")){
-			/* Loop over discs. */
-			for(XMLElement discElement : albumElement.getChild("discs").getChildren("disc")){
-				Disc disc = new Disc(
-					Integer.parseInt(discElement.getChildText("disc-number")),
-					discElement.getChildText("name")
-				);
-				
-				/* Loop over tracks of current disc. */
-				for(XMLElement trackElement : discElement.getChildren("track")){
-					/* Parse track element. */
-					Track track = Track.fromXMLElement(trackElement);
-					
-					/* Also add artist and album information to track. */
-					track.setArtist(album.artist);
-					track.setAlbum(album);
-					track.setCover(album.cover);
-					
-					/* Add track to list of tracks. */
-					disc.getTracks().add(track);
-				}
-				
-				album.discs.add(disc);
-			}
-		}		
-		
-		/* TODO: album-type, copyright, discs, ... */
-		
-		return album;
-	}
-	
-	/**
 	 * Determines if an object is equal to this {@link Album} object.
 	 * If both objects are {@link Album} objects, it will compare their identifiers.
 	 * 
@@ -392,7 +300,15 @@ public class Album extends Media {
 		if(o instanceof Album){
 			Album a = (Album)o;
 			
-			return this.id.equals(a.id);
+			if(this.id.equals(a.id)){
+				return true;
+			}
+			
+			for(String id : this.redirects){
+				if(id.equals(a.id)){
+					return true;
+				}
+			}
 		}
 		
 		return false;

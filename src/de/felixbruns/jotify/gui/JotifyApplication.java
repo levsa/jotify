@@ -1,5 +1,18 @@
 package de.felixbruns.jotify.gui;
 
+import java.awt.AWTException;
+import java.awt.MenuItem;
+import java.awt.PopupMenu;
+import java.awt.SystemTray;
+import java.awt.TrayIcon;
+import java.awt.event.ActionEvent;
+import java.awt.event.ActionListener;
+import java.util.List;
+import java.util.concurrent.TimeoutException;
+
+import javax.swing.ImageIcon;
+import javax.swing.JFrame;
+
 import de.felixbruns.jotify.Jotify;
 import de.felixbruns.jotify.JotifyPool;
 import de.felixbruns.jotify.exceptions.AuthenticationException;
@@ -11,8 +24,8 @@ import de.felixbruns.jotify.gui.util.JotifyLoginCredentials;
 import de.felixbruns.jotify.gui.util.JotifyPreferences;
 import de.felixbruns.jotify.media.Playlist;
 import de.felixbruns.jotify.media.PlaylistContainer;
-import de.felixbruns.jotify.media.Result;
 import de.felixbruns.jotify.media.Track;
+import de.felixbruns.jotify.player.PlaybackListener;
 
 public class JotifyApplication {
 	/* Application frame and broadcast. */
@@ -20,6 +33,7 @@ public class JotifyApplication {
 	private JotifyBroadcast   broadcast;
 	private JotifyPreferences settings;
 	private JotifyPlayer      player;
+	private TrayIcon          trayIcon;
 	
 	/* Jotify API. */
 	private final Jotify jotify;
@@ -30,6 +44,7 @@ public class JotifyApplication {
 		this.settings  = null; /* Created in initialize method. */
 		this.player    = null; /* Created in initialize method. */
 		this.jotify    = jotify;
+		this.trayIcon  = null; /* Created in initialize method. */
 	}
 	
 	public void initialize(){
@@ -38,30 +53,40 @@ public class JotifyApplication {
 		this.settings.load();
 		
 		/* Get login credentials from settings. */
-		JotifyLoginCredentials credentials = this.settings.getLoginCredentials();
+		final JotifyLoginCredentials credentials = this.settings.getLoginCredentials();
+		
+		/* Show login dialog. */
+		JotifyLoginDialog.showDialog();
 		
 		/* Login process. Repeat if login failed. */
 		while(true){
-			/* Ask for login credentials if they're not saved. */
-			if(credentials == null || !credentials.getRemember()){
-				credentials = JotifyLoginDialog.showDialog();
-				
-				JotifyLoginDialog.hideMessage();
-				JotifyLoginDialog.showLoader();
+			/* Ask for login credentials if they're not marked as remebmered. */
+			if(!credentials.getRemember()){
+				JotifyLoginDialog.getLoginCredentials(credentials);
 			}
 			/* If credentials are present, just show loader. */
 			else{
-				JotifyLoginDialog.showDialogNonBlocking();
 				JotifyLoginDialog.setLoginCredentials(credentials);
-				JotifyLoginDialog.showLoader();
 			}
+			
+			/* Hide message and show loader. */
+			JotifyLoginDialog.hideMessage();
+			JotifyLoginDialog.showLoader();
+			JotifyLoginDialog.updateDialog();
 			
 			try{
 				/* Try to login by getting the default Jotify instance. */
 				this.jotify.login(credentials.getUsername(), credentials.getPassword());
 				
+				/* Check if user is premium. */
+				if(!this.jotify.user().isPremium()){
+					this.jotify.close();
+					
+					throw new AuthenticationException("You need a premium account in order to use jotify!");
+				}
+				
 				/* Create player. */
-				this.player = new JotifyPlayer(jotify);
+				this.player = new JotifyPlayer(this.jotify);
 				this.broadcast.addControlListener(this.player);
 				
 				/* Create scrobbler if enabled. */
@@ -78,16 +103,105 @@ public class JotifyApplication {
 				this.settings.save();
 				
 				/* Create and show main application frame. Center it on screen. */
-				this.frame = new JotifyFrame(jotify);
+				this.frame = new JotifyFrame(this.jotify);
 				this.frame.setVisible(true);
 				this.frame.setLocationRelativeTo(null);
 				
-				/* Load playlists in a separate thread. */
+				/* Add a system tray icon. */
+				if(SystemTray.isSupported()){
+					this.trayIcon = new TrayIcon(
+						new ImageIcon(JotifyApplication.class.getResource("images/icon_128.png")).getImage(),
+						"Jotify"
+					);
+					
+					/* Add a popup menu to the system tray icon (it for some reason blocks the whole application when shown). */
+					final PopupMenu menu       = new PopupMenu();
+					final MenuItem  trackItem  = new MenuItem("No track playing");
+					final MenuItem  openItem   = new MenuItem("Open Jotify");
+					//final MenuItem  playItem   = new MenuItem("Play/Pause");
+					//final MenuItem  nextItem   = new MenuItem("Next");
+					//final MenuItem  prevItem   = new MenuItem("Previous");
+					final MenuItem  logoutItem = new MenuItem("Logout '" + this.jotify.user().getName() + "'");
+					final MenuItem  exitItem   = new MenuItem("Exit");
+					
+					trackItem.setEnabled(false);
+					//nextItem.setEnabled(false);
+					//prevItem.setEnabled(false);
+					
+					openItem.addActionListener(new ActionListener(){
+						public void actionPerformed(ActionEvent e){
+							frame.setExtendedState(frame.getExtendedState() &~ JFrame.ICONIFIED);
+							frame.requestFocus();
+						}
+					});
+					
+					logoutItem.addActionListener(new ActionListener(){
+						public void actionPerformed(ActionEvent e){
+							credentials.setRemember(false);
+							
+							/* Save login credentials (they are valid!). */
+							settings.setLoginCredentials(credentials);
+							settings.save();
+							
+							System.exit(0);
+						}
+					});
+					
+					exitItem.addActionListener(new ActionListener(){
+						public void actionPerformed(ActionEvent e){
+							System.exit(0);
+						}
+					});
+					
+					menu.add(trackItem);
+					menu.addSeparator();
+					menu.add(openItem);
+					//menu.addSeparator();
+					//menu.add(playItem);
+					//menu.add(nextItem);
+					//menu.add(prevItem);
+					menu.addSeparator();
+					menu.add(logoutItem);
+					menu.add(exitItem);
+					
+					this.player.addPlaybackListener(new PlaybackListener(){
+						public void playbackFinished(Track track){}
+						public void playbackPosition(Track track, int position){}
+						public void playbackResumed(Track track){}
+						public void playbackStarted(Track track){
+							trackItem.setLabel(track.getArtist().getName() + " - " + track.getTitle());
+						}
+						public void playbackStopped(Track track){}
+					});
+					
+					this.trayIcon.setImageAutoSize(true);
+					this.trayIcon.setPopupMenu(menu);
+					
+					try{
+						SystemTray.getSystemTray().add(this.trayIcon);
+					}
+					catch(AWTException e){
+						/* Couldn't add system tray icon. */
+					}
+				}
+				
+				/* Load playlists in a separate thread. TODO: retry on fail. */
 				new Thread("Playlist-Loading-Thread"){
 					public void run(){
 						/* Get information about account playlists. */
-						PlaylistContainer playlists = jotify.playlists();
-						//boolean           useCache  = true;
+						PlaylistContainer playlists = null;
+						boolean           cached    = true;
+						
+						while(true){
+							try{
+								playlists = jotify.playlistContainer();
+								
+								break;
+							}
+							catch(TimeoutException e){
+								continue;
+							}
+						}
 						
 						/* Fire playlist added events. */
 						for(Playlist playlist : playlists){
@@ -99,28 +213,59 @@ public class JotifyApplication {
 							settings.setPlaylistsRevision(playlists.getRevision());
 							settings.save();
 							
-							//useCache = false;
+							cached = false;
 						}
 						
 						/* Get details for each playlist. */
 						for(Playlist playlist : playlists){
 							/* Get playlist details. */
-							//playlist = jotify.playlist(playlist.getId(), useCache); TODO load from cache
-							playlist = jotify.playlist(playlist.getId());
+							while(true){
+								try{
+									playlist = jotify.playlist(playlist.getId(), cached);
+									
+									break;
+								}
+								catch(TimeoutException e){
+									continue;
+								}
+							}
 							
-							if (!playlist.getTracks().isEmpty()) {
-					  		/* Browse multiple tracks and add them to the playlist. */
-  							Result result = jotify.browse(playlist.getTracks());
-							
-  							/* Add track information to playlist. */
-  							for(Track track : result.getTracks()){
-  								int index = playlist.getTracks().indexOf(track);
+							/* If playlist contains tracks, browse for track information. */
+							if(!playlist.getTracks().isEmpty()){
+								int totalTracks = playlist.getTracks().size();
+								int numTracks   = 200;
+								int numRequests = (int)(totalTracks / numTracks) + 1;
 								
-  								if(index != -1){
-  									playlist.getTracks().set(index, track);
-  								}
-  							}
-						  }
+								/* Browse for 200 tracks at a time tracks and add them to the playlist. */
+								for(int i = 0; i < numRequests; i++){
+									List<Track> tracks = null;
+									
+									while(true){
+										try{
+											tracks = jotify.browse(
+												playlist.getTracks().subList(
+													i * numTracks,
+													Math.min((i + 1) * numTracks, totalTracks)
+												)
+											);
+											
+											break;
+										}
+										catch(TimeoutException e){
+											continue;
+										}
+									}
+									
+									/* Add track information to playlist (also works with duplicate tracks). */
+									for(Track track : tracks){
+		  								for(int j = 0; j < playlist.getTracks().size(); j++){
+		  									if(track.equals(playlist.getTracks().get(j))){
+		  										playlist.getTracks().set(j, track);
+		  									}
+		  								}
+		  							}
+								}
+							}
 							
 							/* Fire playlist updated events. */
 							broadcast.firePlaylistUpdated(playlist);
@@ -133,21 +278,41 @@ public class JotifyApplication {
 			}
 			/* If we got a connection error, show it. */
 			catch(ConnectionException e){
+				if(e.getCause() != null){
+					JotifyLoginDialog.showErrorMessage(e.getCause().getMessage());
+				}
+				else{
+					JotifyLoginDialog.showErrorMessage(e.getMessage());
+				}
+				
 				JotifyLoginDialog.hideLoader();
-				JotifyLoginDialog.showError(e.getMessage());
+				JotifyLoginDialog.updateDialog();
 			}
 			/* If we got an authentication error, show it. */
 			catch(AuthenticationException e){
+				if(e.getCause() != null){
+					JotifyLoginDialog.showErrorMessage(e.getCause().getMessage());
+				}
+				else{
+					JotifyLoginDialog.showErrorMessage(e.getMessage());
+				}
+				
 				JotifyLoginDialog.hideLoader();
-				JotifyLoginDialog.showError(e.getMessage());
+				JotifyLoginDialog.updateDialog();
 				
 				/* Don't check "Remember me", if login failed. */
 				credentials.setRemember(false);
 			}
+			/* If we got a timeout. */
+			catch(TimeoutException e){
+				JotifyLoginDialog.showErrorMessage(e.getMessage());
+				
+				JotifyLoginDialog.hideLoader();
+				JotifyLoginDialog.updateDialog();
+			}
 		}
 		
 		/* Hide login dialog. */
-		JotifyLoginDialog.hideLoader();
 		JotifyLoginDialog.hideDialog();
 	}
 	

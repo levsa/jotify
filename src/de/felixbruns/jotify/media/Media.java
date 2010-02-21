@@ -5,14 +5,26 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
+import de.felixbruns.jotify.media.Link.InvalidSpotifyURIException;
 import de.felixbruns.jotify.util.Hex;
-import de.felixbruns.jotify.util.XMLElement;
 
+/**
+ * Holds basic information about media.
+ * 
+ * @author Felix Bruns <felixbruns@web.de>
+ * 
+ * @category Media
+ */
 public class Media {
 	/**
-	 * Identifier for this media (32-character string).
+	 * Identifier for this media object (32-character hex string).
 	 */
 	protected String id;
+	
+	/**
+	 * Redirects (other identifiers) for this media (32-character hex strings).
+	 */
+	protected List<String> redirects;
 	
 	/**
 	 * Popularity of this media (from 0.0 to 1.0).
@@ -34,6 +46,7 @@ public class Media {
 	 */
 	protected Media(){
 		this.id           = null;
+		this.redirects    = new ArrayList<String>();
 		this.popularity   = Float.NaN;
 		this.restrictions = new ArrayList<Restriction>();
 		this.externalIds  = new HashMap<String, String>();
@@ -42,24 +55,37 @@ public class Media {
 	/**
 	 * Creates a {@link Media} object with the specified {@code id}.
 	 * 
-	 * @param id Id of the track.
+	 * @param id A 32-character hex string or a Spotify URI.
 	 * 
 	 * @throws IllegalArgumentException If the given id is invalid.
 	 */
 	protected Media(String id){
-		/* Check if id string is valid. */
-		if(id == null || id.length() != 32 || !Hex.isHex(id)){
-			throw new IllegalArgumentException("Expecting a 32-character hex string.");
+		/* Check if id is a 32-character hex string. */
+		if(id.length() == 32 && Hex.isHex(id)){
+			this.id = id;
+		}
+		/* Otherwise try to parse it as a Spotify URI. */
+		else{
+			try{
+				this.id = Link.create(id).getId();
+			}
+			catch(InvalidSpotifyURIException e){
+				throw new IllegalArgumentException(
+					"Given id is neither a 32-character " +
+					"hex string nor a valid Spotify URI.", e
+				);
+			}
 		}
 		
-		this.id           = id;
+		/* Set other media properties. */
+		this.redirects    = new ArrayList<String>();
 		this.popularity   = Float.NaN;
 		this.restrictions = new ArrayList<Restriction>();
 		this.externalIds  = new HashMap<String, String>();
 	}
 	
 	/**
-	 * Get the medias identifier.
+	 * Get the media identifier.
 	 * 
 	 * @return A 32-character identifier.
 	 */
@@ -68,7 +94,7 @@ public class Media {
 	}
 	
 	/**
-	 * Set the medias identifier.
+	 * Set the media identifier.
 	 * 
 	 * @param id A 32-character identifier.
 	 * 
@@ -84,7 +110,25 @@ public class Media {
 	}
 	
 	/**
-	 * Get the medias popularity.
+	 * Get the media redirects.
+	 * 
+	 * @return A {@link List} of 32-character identifiers.
+	 */
+	public List<String> getRedirects(){
+		return this.redirects;
+	}
+	
+	/**
+	 * Add a media redirect.
+	 * 
+	 * @param id A 32-character identifier.
+	 */
+	public void addRedirect(String redirect){
+		this.redirects.add(redirect);
+	}
+	
+	/**
+	 * Get the media popularity.
 	 * 
 	 * @return A decimal value between 0.0 and 1.0 or {@link Float.NAN} if not available.
 	 */
@@ -93,7 +137,7 @@ public class Media {
 	}
 	
 	/**
-	 * Set the medias popularity.
+	 * Set the media popularity.
 	 * 
 	 * @param popularity A decimal value between 0.0 and 1.0 or {@link Float.NAN}.
 	 * 
@@ -109,7 +153,7 @@ public class Media {
 	}
 	
 	/**
-	 * Get the medias restrictions.
+	 * Get the media restrictions.
 	 * 
 	 * @return A {@link List} of {@link Restriction} objects.
 	 */
@@ -144,7 +188,7 @@ public class Media {
 	}
 	
 	/**
-	 * Set the medias restrictions.
+	 * Set the media restrictions.
 	 * 
 	 * @param restrictions A {@link List} of {@link Restriction} objects.
 	 */
@@ -153,7 +197,7 @@ public class Media {
 	}
 	
 	/**
-	 * Get the medias external identifiers.
+	 * Get the media external identifiers.
 	 * 
 	 * @return A {@link Map} of external services and their identifers for the media.
 	 */
@@ -173,34 +217,11 @@ public class Media {
 	}
 	
 	/**
-	 * Set the medias external identifiers.
+	 * Set the media external identifiers.
 	 * 
 	 * @param externalIds A {@link Map} of external services and their identifers for the media.
 	 */
 	public void setExternalIds(Map<String, String> externalIds){
 		this.externalIds = externalIds;
-	}
-	
-	/**
-	 * Create a {@link Media} object from an {@link XMLElement} holding media information.
-	 * 
-	 * @param mediaElement An {@link XMLElement} holding media information.
-	 * 
-	 * @return A {@link Media} object.
-	 */
-	public static Media fromXMLElement(XMLElement mediaElement){
-		Media media = new Media();
-		
-		/* Set id. */
-		if(mediaElement.hasChild("id")){
-			media.id = mediaElement.getChildText("id");
-		}
-		
-		/* Set popularity. */
-		if(mediaElement.hasChild("popularity")){
-			media.popularity = Float.parseFloat(mediaElement.getChildText("popularity"));
-		}
-		
-		return media;
 	}
 }

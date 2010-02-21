@@ -1,41 +1,21 @@
 package de.felixbruns.jotify.gateway;
 
-import java.io.OutputStream;
+import java.io.IOException;
 import java.nio.charset.Charset;
-import java.util.Arrays;
-import java.util.Collection;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
-import java.util.concurrent.Semaphore;
-import java.util.concurrent.TimeUnit;
-import java.util.concurrent.TimeoutException;
+import java.util.*;
+import java.util.concurrent.*;
 
-import de.felixbruns.jotify.JotifyPlayer;
-import de.felixbruns.jotify.cache.Cache;
-import de.felixbruns.jotify.cache.FileCache;
-import de.felixbruns.jotify.cache.MemoryCache;
+import com.sun.net.httpserver.HttpExchange;
+
+import de.felixbruns.jotify.cache.*;
 import de.felixbruns.jotify.crypto.RSA;
-import de.felixbruns.jotify.exceptions.AuthenticationException;
-import de.felixbruns.jotify.exceptions.ConnectionException;
-import de.felixbruns.jotify.exceptions.ProtocolException;
+import de.felixbruns.jotify.exceptions.*;
 import de.felixbruns.jotify.gateway.stream.ChannelStreamer;
-import de.felixbruns.jotify.gateway.stream.HTTPStreamer;
-import de.felixbruns.jotify.media.Result;
-import de.felixbruns.jotify.media.Track;
-import de.felixbruns.jotify.media.User;
-import de.felixbruns.jotify.player.PlaybackListener;
-import de.felixbruns.jotify.player.Player;
-import de.felixbruns.jotify.protocol.Command;
-import de.felixbruns.jotify.protocol.CommandListener;
-import de.felixbruns.jotify.protocol.Protocol;
-import de.felixbruns.jotify.protocol.Session;
-import de.felixbruns.jotify.protocol.channel.Channel;
-import de.felixbruns.jotify.protocol.channel.ChannelCallback;
-import de.felixbruns.jotify.protocol.channel.ChannelHeaderCallback;
-import de.felixbruns.jotify.util.GZIP;
-import de.felixbruns.jotify.util.XML;
-import de.felixbruns.jotify.util.XMLElement;
+import de.felixbruns.jotify.media.*;
+import de.felixbruns.jotify.media.parser.*;
+import de.felixbruns.jotify.player.*;
+import de.felixbruns.jotify.protocol.*;
+import de.felixbruns.jotify.protocol.channel.*;
 
 public class GatewayConnection implements Runnable, CommandListener, Player {
 	private Session      session;
@@ -45,7 +25,7 @@ public class GatewayConnection implements Runnable, CommandListener, Player {
 	private Cache        cache;
 	private long         timeout;
 	private TimeUnit     unit;
-	private JotifyPlayer player;
+	private GatewayPlayer player;
 	
 	/**
 	 * Enum for browsing media.
@@ -141,7 +121,7 @@ public class GatewayConnection implements Runnable, CommandListener, Player {
 		this.user = new User(username);
 		
 		/* Create player. */
-		this.player = new JotifyPlayer(this.protocol);
+		this.player = new GatewayPlayer(this.protocol);
 		
 		/* Add command handler. */
 		this.protocol.addListener(this);
@@ -210,7 +190,7 @@ public class GatewayConnection implements Runnable, CommandListener, Player {
 			"<user>" + 
 				"<name>" + this.user.getName() + "</name>" +
 				"<country>" + this.user.getCountry() + "</country>" +
-				"<type>" + this.user.getType() + "</type>" +
+				"<type>" + this.user.getProperty("type") + "</type>" +
 			"</user>";
 		
 		return xml;
@@ -225,7 +205,7 @@ public class GatewayConnection implements Runnable, CommandListener, Player {
 	 * 
 	 * @return A xml string.
 	 */
-	public String toplist(String type, String region, String username){
+	public String toplist(String type, String region, String username) throws TimeoutException {
 		/* Create channel callback and parameter map. */
 		ChannelCallback callback   = new ChannelCallback();
 		Map<String, String> params = new HashMap<String, String>();
@@ -243,11 +223,8 @@ public class GatewayConnection implements Runnable, CommandListener, Player {
 			return null;
 		}
 		
-		/* Get data and inflate it. */
-		byte[] data = GZIP.inflate(callback.get(this.timeout, this.unit));
-		
-		/* Cut off that last 0xFF byte... */
-		data = Arrays.copyOfRange(data, 0, data.length - 1);
+		/* Get data. */
+		byte[] data = callback.get(this.timeout, this.unit);
 		
 		/* Return xml string. */
 		return new String(data, Charset.forName("UTF-8"));
@@ -260,7 +237,7 @@ public class GatewayConnection implements Runnable, CommandListener, Player {
 	 * 
 	 * @return A xml string.
 	 */
-	public String search(String query){
+	public String search(String query) throws TimeoutException {
 		/* Create channel callback */
 		ChannelCallback callback = new ChannelCallback();
 		
@@ -272,11 +249,8 @@ public class GatewayConnection implements Runnable, CommandListener, Player {
 			return null;
 		}
 		
-		/* Get data and inflate it. */
-		byte[] data = GZIP.inflate(callback.get(this.timeout, this.unit));
-		
-		/* Cut off that last 0xFF byte... */
-		data = Arrays.copyOfRange(data, 0, data.length - 1);
+		/* Get data. */
+		byte[] data = callback.get(this.timeout, this.unit);
 		
 		/* Return xml string. */
 		return new String(data, Charset.forName("UTF-8"));
@@ -290,7 +264,7 @@ public class GatewayConnection implements Runnable, CommandListener, Player {
 	 * 
 	 * @return An array of bytes.
 	 */
-	public byte[] image(String id){
+	public byte[] image(String id) throws TimeoutException {
 		/* Data buffer. */
 		byte[] data;
 		
@@ -333,7 +307,7 @@ public class GatewayConnection implements Runnable, CommandListener, Player {
 	 * 
 	 * @see BrowseType
 	 */
-	public String browse(BrowseType type, String id){
+	public String browse(BrowseType type, String id) throws TimeoutException {
 		/* Create channel callback */
 		ChannelCallback callback = new ChannelCallback();
 		
@@ -345,11 +319,8 @@ public class GatewayConnection implements Runnable, CommandListener, Player {
 			return null;
 		}
 		
-		/* Get data and inflate it. */
-		byte[] data = GZIP.inflate(callback.get(this.timeout, this.unit));
-		
-		/* Cut off that last 0xFF byte... */
-		data = Arrays.copyOfRange(data, 0, data.length - 1);
+		/* Get data. */
+		byte[] data = callback.get(this.timeout, this.unit);
 		
 		/* Load XML. */
 		return new String(data, Charset.forName("UTF-8"));
@@ -362,7 +333,7 @@ public class GatewayConnection implements Runnable, CommandListener, Player {
 	 * 
 	 * @return A xml string.
 	 */
-	public String browse(Collection<String> ids){
+	public String browse(Collection<String> ids) throws TimeoutException {
 		/* Create channel callback */
 		ChannelCallback callback = new ChannelCallback();
 		
@@ -374,11 +345,8 @@ public class GatewayConnection implements Runnable, CommandListener, Player {
 			return null;
 		}
 		
-		/* Get data and inflate it. */
-		byte[] data = GZIP.inflate(callback.get(this.timeout, this.unit));
-		
-		/* Cut off that last 0xFF byte... */
-		data = Arrays.copyOfRange(data, 0, data.length - 1);
+		/* Get data. */
+		byte[] data = callback.get(this.timeout, this.unit);
 		
 		/* Load XML. */
 		return new String(data, Charset.forName("UTF-8"));
@@ -389,13 +357,13 @@ public class GatewayConnection implements Runnable, CommandListener, Player {
 	 * 
 	 * @return A xml string.
 	 */
-	public String playlists(){
+	public String playlistContainer() throws TimeoutException {
 		/* Create channel callback. */
 		ChannelCallback callback = new ChannelCallback();
 		
 		/* Send stored playlists request. */
 		try{
-			this.protocol.sendUserPlaylistsRequest(callback);
+			this.protocol.sendPlaylistRequest(callback, null);
 		}
 		catch(ProtocolException e){
 			return null;
@@ -417,7 +385,7 @@ public class GatewayConnection implements Runnable, CommandListener, Player {
 	 * 
 	 * @return A xml string.
 	 */
-	public String playlist(String id){
+	public String playlist(String id) throws TimeoutException {
 		/* Create channel callback */
 		ChannelCallback callback = new ChannelCallback();
 		
@@ -440,45 +408,33 @@ public class GatewayConnection implements Runnable, CommandListener, Player {
 	
 	/**
 	 * Stream a track to an output stream.
+	 * 
+	 * @throws IOException
 	 */
-	public void stream(String id, String fileId, OutputStream stream){
-		/* Create track and set file id. */
-		Result result = Result.fromXMLElement(XML.load(browse(BrowseType.TRACK, id)));
-		Track  track  = result.getTracks().get(0);
+	public void stream(String id, String fileId, HttpExchange exchange) throws IOException, TimeoutException  {
+		/* Browse track. */
+		Track track = new Track(id);
+		
+		track.addFile(new File(fileId, ""));
 		
 		/* Create channel callbacks. */
-		ChannelCallback       callback       = new ChannelCallback();
-		ChannelHeaderCallback headerCallback = new ChannelHeaderCallback();
+		ChannelCallback callback = new ChannelCallback();
 		
 		/* Send play request (token notify + AES key). */
 		try{
 			this.protocol.sendAesKeyRequest(callback, track);
 		}
 		catch(ProtocolException e){
+			exchange.sendResponseHeaders(404, -1);
+			
 			return;
 		}
 		
 		/* Get AES key. */
 		byte[] key = callback.get(this.timeout, this.unit);
 		
-		/* Send header request to check for HTTP stream. */
-		try{
-			this.protocol.sendSubstreamRequest(headerCallback, track, 0, 0);
-		}
-		catch(ProtocolException e){
-			return;
-		}
-		
-		/* Get list of HTTP stream URLs. */
-		List<String> urls = headerCallback.get(this.timeout, this.unit);
-		
-		/* If we got 4 HTTP stream URLs use them, otherwise use default channel streaming. */
-		if(urls.size() == 4){
-			new HTTPStreamer(urls, track, key, stream);
-		}
-		else{
-			new ChannelStreamer(this.protocol, track, key, stream);
-		}
+		/* Stream channel. */
+		new ChannelStreamer(this.protocol, track, key, exchange);
 	}
 	
 	/**
@@ -562,9 +518,7 @@ public class GatewayConnection implements Runnable, CommandListener, Player {
 				break;
 			}
 			case Command.COMMAND_PRODINFO: {
-				XMLElement prodinfoElement = XML.load(new String(payload, Charset.forName("UTF-8")));
-				
-				this.user = User.fromXMLElement(prodinfoElement, this.user);
+				this.user = XMLUserParser.parseUser(payload, "UTF-8", this.user);
 				
 				/* Release 'prodinfo' permit. */
 				this.wait.release();

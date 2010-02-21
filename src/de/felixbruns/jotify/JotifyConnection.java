@@ -4,16 +4,8 @@ import java.awt.Image;
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.nio.charset.Charset;
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.Date;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
-import java.util.Scanner;
-import java.util.concurrent.Semaphore;
-import java.util.concurrent.TimeUnit;
-import java.util.concurrent.TimeoutException;
+import java.util.*;
+import java.util.concurrent.*;
 
 import javax.imageio.ImageIO;
 
@@ -21,9 +13,9 @@ import de.felixbruns.jotify.cache.*;
 import de.felixbruns.jotify.crypto.*;
 import de.felixbruns.jotify.exceptions.*;
 import de.felixbruns.jotify.media.*;
-import de.felixbruns.jotify.media.parser.XMLMediaParser;
+import de.felixbruns.jotify.media.Link.InvalidSpotifyURIException;
+import de.felixbruns.jotify.media.parser.*;
 import de.felixbruns.jotify.player.*;
-import de.felixbruns.jotify.player.http.HTTPStreamPlayer;
 import de.felixbruns.jotify.protocol.*;
 import de.felixbruns.jotify.protocol.channel.*;
 import de.felixbruns.jotify.util.*;
@@ -31,6 +23,7 @@ import de.felixbruns.jotify.util.*;
 public class JotifyConnection implements Jotify, CommandListener {
 	private Session   session;
 	private Protocol  protocol;
+	private boolean   running;
 	private User      user;
 	private Semaphore userSemaphore;
 	private Player    player;
@@ -79,6 +72,7 @@ public class JotifyConnection implements Jotify, CommandListener {
 	public JotifyConnection(Cache cache, long timeout, TimeUnit unit){
 		this.session       = new Session();
 		this.protocol      = null;
+		this.running       = false;
 		this.user          = null;
 		this.userSemaphore = new Semaphore(2);
 		this.player        = null;
@@ -125,12 +119,15 @@ public class JotifyConnection implements Jotify, CommandListener {
 		
 		/* Add command handler. */
 		this.protocol.addListener(this);
+		
+		/* Start I/O thread. */
+		new Thread(this).start();
 	}
 	
 	/**
-	 *  Closes the connection to a Spotify server.
-	 *  
-	 *  @throws ConnectionException
+	 * Closes the connection to a Spotify server.
+	 * 
+	 * @throws ConnectionException
 	 */
 	public void close() throws ConnectionException {
 		/* This will make receivePacket return immediately. */
@@ -143,23 +140,36 @@ public class JotifyConnection implements Jotify, CommandListener {
 	}
 	
 	/**
-	 *  Continuously receives packets in order to handle them.
-	 *  Use a {@link Thread} to run this.
+	 * Continuously receives packets in order to handle them.
 	 */
 	public void run(){
+		/* Fail quietly. */
+		if(this.running){
+			return;
+		}
+		
 		/* Check if we're logged in. */
 		if(this.protocol == null){
 			throw new IllegalStateException("You need to login first!");
 		}
 		
+		this.running = true;
+		
 		/* Continuously receive packets until connection is closed. */
 		try{
 			while(true){
+				if(this.protocol == null){
+					break;
+				}
+				
 				this.protocol.receivePacket();
 			}
 		}
 		catch(ProtocolException e){
 			/* Connection was closed. */
+		}
+		finally{
+			this.running = false;
 		}
 	}
 	
@@ -170,24 +180,22 @@ public class JotifyConnection implements Jotify, CommandListener {
 	 * 
 	 * @see User
 	 */
-	public User user(){
+	public User user() throws TimeoutException {
 		/* Wait for data to become available (country, prodinfo). */
 		try{
 			if(!this.userSemaphore.tryAcquire(2, this.timeout, this.unit)){
 				throw new TimeoutException("Timeout while waiting for user data.");
 			}
+			
+			return this.user;
 		}
 		catch(InterruptedException e){
-			throw new RuntimeException(e);
+			return null;
 		}
-		catch(TimeoutException e){
-			throw new RuntimeException(e);
+		finally{
+			/* Release so this can be called again. */
+			this.userSemaphore.release(2);
 		}
-		
-		/* Release so this can be called again. */
-		this.userSemaphore.release(2);
-		
-		return this.user;
 	}
 	
 	/**
@@ -201,7 +209,7 @@ public class JotifyConnection implements Jotify, CommandListener {
 	 * 
 	 * @see Result
 	 */
-	public Result toplist(String type, String region, String username){
+	public Result toplist(String type, String region, String username) throws TimeoutException {
 		/* Create channel callback and parameter map. */
 		ChannelCallback callback   = new ChannelCallback();
 		Map<String, String> params = new HashMap<String, String>();
@@ -219,11 +227,8 @@ public class JotifyConnection implements Jotify, CommandListener {
 			return null;
 		}
 		
-		/* Get data and inflate it. */
-		byte[] data = GZIP.inflate(callback.get(this.timeout, this.unit));
-		
-		/* Cut off that last 0xFF byte... */
-		data = Arrays.copyOfRange(data, 0, data.length - 1);
+		/* Get data. */
+		byte[] data = callback.get(this.timeout, this.unit);
 		
 		/* Create result from XML. */
 		return XMLMediaParser.parseResult(data, "UTF-8");
@@ -238,7 +243,7 @@ public class JotifyConnection implements Jotify, CommandListener {
 	 * 
 	 * @see Result
 	 */
-	public Result search(String query){
+	public Result search(String query) throws TimeoutException {
 		/* Create channel callback. */
 		ChannelCallback callback = new ChannelCallback();
 		
@@ -250,11 +255,8 @@ public class JotifyConnection implements Jotify, CommandListener {
 			return null;
 		}
 		
-		/* Get data and inflate it. */
-		byte[] data = GZIP.inflate(callback.get(this.timeout, this.unit));
-		
-		/* Cut off that last 0xFF byte... */
-		data = Arrays.copyOfRange(data, 0, data.length - 1);
+		/* Get data. */
+		byte[] data = callback.get(this.timeout, this.unit);
 		
 		/* Create result from XML. */
 		Result result = XMLMediaParser.parseResult(data, "UTF-8");
@@ -275,7 +277,7 @@ public class JotifyConnection implements Jotify, CommandListener {
 	 * 
 	 * @see Image
 	 */
-	public Image image(String id){
+	public Image image(String id) throws TimeoutException {
 		/* Data buffer. */
 		byte[] data;
 		
@@ -317,14 +319,40 @@ public class JotifyConnection implements Jotify, CommandListener {
 	 * Browse artist, album or track info.
 	 * 
 	 * @param type Type of media to browse for.
-	 * @param id   Id of media to browse.
+	 * @param id   A 32-character hex string or a Spotify URI.
 	 * 
 	 * @return An {@link XMLElement} object holding the data or null
 	 *         on failure.
 	 * 
 	 * @see BrowseType
 	 */
-	private Object browse(BrowseType type, String id){
+	private Object browse(BrowseType type, String id) throws TimeoutException {
+		/*
+		 * Check if id is a 32-character hex string,
+		 * if not try to parse it as a Spotify URI.
+		 */
+		if(id.length() != 32 && !Hex.isHex(id)){
+			try{
+				Link link = Link.create(id);
+				
+				if((type.equals(BrowseType.ARTIST) && !link.isArtistLink()) ||
+				   (type.equals(BrowseType.ALBUM)  && !link.isAlbumLink())  ||
+				   (type.equals(BrowseType.TRACK)  && !link.isTrackLink())){
+					throw new IllegalArgumentException(
+						"Browse type doesn't match given Spotify URI."
+					);
+				}
+				
+				id = link.getId();
+			}
+			catch(InvalidSpotifyURIException e){
+				throw new IllegalArgumentException(
+					"Given id is neither a 32-character " +
+					"hex string nor a valid Spotify URI."
+				);
+			}
+		}
+		
 		/* Create channel callback. */
 		ChannelCallback callback = new ChannelCallback();
 		
@@ -336,27 +364,23 @@ public class JotifyConnection implements Jotify, CommandListener {
 			return null;
 		}
 		
-		/* Get data and inflate it. */
-		byte[] data = GZIP.inflate(callback.get(this.timeout, this.unit));
-		
-		/* Cut off that last 0xFF byte... */
-		data = Arrays.copyOfRange(data, 0, data.length - 1);
-		
 		/* Create object from XML. */
-		return XMLMediaParser.parse(data, "UTF-8");
+		return XMLMediaParser.parse(
+			callback.get(this.timeout, this.unit), "UTF-8"
+		);
 	}
 	
 	/**
 	 * Browse artist info by id.
 	 * 
-	 * @param id An id identifying the artist to browse.
+	 * @param id A 32-character hex string or a Spotify URI.
 	 * 
 	 * @retrun An {@link Artist} object holding more information about
 	 *         the artist or null on failure.
 	 * 
 	 * @see Artist
 	 */
-	public Artist browseArtist(String id){
+	public Artist browseArtist(String id) throws TimeoutException {
 		/* Browse. */
 		Object artist = this.browse(BrowseType.ARTIST, id);
 		
@@ -377,21 +401,21 @@ public class JotifyConnection implements Jotify, CommandListener {
 	 * 
 	 * @see Artist
 	 */
-	public Artist browse(Artist artist){
+	public Artist browse(Artist artist) throws TimeoutException {
 		return this.browseArtist(artist.getId());
 	}
 	
 	/**
 	 * Browse album info by id.
 	 * 
-	 * @param id An id identifying the album to browse.
+	 * @param id A 32-character hex string or a Spotify URI.
 	 * 
 	 * @retrun An {@link Album} object holding more information about
 	 *         the album or null on failure.
 	 * 
 	 * @see Album
 	 */
-	public Album browseAlbum(String id){
+	public Album browseAlbum(String id) throws TimeoutException {
 		/* Browse. */
 		Object album = this.browse(BrowseType.ALBUM, id);
 		
@@ -412,27 +436,31 @@ public class JotifyConnection implements Jotify, CommandListener {
 	 * 
 	 * @see Album
 	 */
-	public Album browse(Album album){
+	public Album browse(Album album) throws TimeoutException {
 		return this.browseAlbum(album.getId());
 	}
 	
 	/**
 	 * Browse track info by id.
 	 * 
-	 * @param id An id identifying the track to browse.
+	 * @param id A 32-character hex string or a Spotify URI.
 	 * 
-	 * @retrun A {@link Result} object holding more information about
-	 *         the track or null on failure.
+	 * @return A {@link Track} object or null on failure.
 	 * 
 	 * @see Track
-	 * @see Result
 	 */
-	public Result browseTrack(String id){
+	public Track browseTrack(String id) throws TimeoutException {
 		/* Browse. */
-		Object result = this.browse(BrowseType.TRACK, id);
+		Object object = this.browse(BrowseType.TRACK, id);
 		
-		if(result instanceof Result){
-			return (Result)result;
+		if(object instanceof Result){
+			Result result = (Result)object;
+			
+			if(result.getTracks().isEmpty()){
+				return null;
+			}
+			
+			return result.getTracks().get(0);
 		}
 		
 		return null;
@@ -443,28 +471,24 @@ public class JotifyConnection implements Jotify, CommandListener {
 	 * 
 	 * @param album A {@link Track} object identifying the track to browse.
 	 * 
-	 * @retrun A {@link Result} object holding more information about
-	 *         the track or null on failure.
+	 * @return A {@link Track} object or null on failure.
 	 * 
 	 * @see Track
-	 * @see Result
 	 */
-	public Result browse(Track track){
+	public Track browse(Track track) throws TimeoutException {
 		return this.browseTrack(track.getId());
 	}
 	
 	/**
 	 * Browse information for multiple tracks by id.
 	 * 
-	 * @param tracks A {@link List} of ids identifying the tracks to browse.
+	 * @param ids A {@link List} of ids identifying the tracks to browse.
 	 * 
-	 * @retrun A {@link Result} object holding more information about
-	 *         the tracks or null on failure.
+	 * @return A list of {@link Track} objects or null on failure.
 	 * 
 	 * @see Track
-	 * @see Result
 	 */
-	public Result browseTracks(List<String> ids){
+	public List<Track> browseTracks(List<String> ids) throws TimeoutException {
 		/* Data buffer. */
 		byte[] data;
 		
@@ -493,11 +517,8 @@ public class JotifyConnection implements Jotify, CommandListener {
 				return null;
 			}
 			
-			/* Get data and inflate it. */
-			data = GZIP.inflate(callback.get(this.timeout, this.unit));
-			
-			/* Cut off that last 0xFF byte... */
-			data = Arrays.copyOfRange(data, 0, data.length - 1);
+			/* Get data. */
+			data = callback.get(this.timeout, this.unit);
 			
 			/* Save to cache. */
 			if(this.cache != null){
@@ -506,7 +527,7 @@ public class JotifyConnection implements Jotify, CommandListener {
 		}
 		
 		/* Create result from XML. */
-		return XMLMediaParser.parseResult(data, "UTF-8");
+		return XMLMediaParser.parseResult(data, "UTF-8").getTracks();
 	}
 	
 	/**
@@ -519,12 +540,11 @@ public class JotifyConnection implements Jotify, CommandListener {
 	 *         the tracks or null on failure.
 	 * 
 	 * @see Track
-	 * @see Result
 	 */
-	public Result browse(List<Track> tracks){
+	public List<Track> browse(List<Track> tracks) throws TimeoutException {
 		/* Create id list. */
 		List<String> ids = new ArrayList<String>();
-			
+		
 		for(Track track : tracks){
 			ids.add(track.getId());
 		}
@@ -533,93 +553,119 @@ public class JotifyConnection implements Jotify, CommandListener {
 	}
 	
 	/**
-	 * Get a list of stored playlists.
+	 * Get stored user playlists.
 	 * 
-	 * @return A {@link List} of {@link Playlist} objects or null on failure.
-	 *         (Note: {@link Playlist} objects only hold id and author)
+	 * @return A {@link PlaylistContainer} holding {@link Playlist} objects
+	 *         or an empty {@link PlaylistContainer} on failure.
+	 *         Note: {@link Playlist} objects only hold id and author and need
+	 *         to be loaded using {@link #playlist(String)}.
 	 * 
-	 * @see Playlist
+	 * @throws TimeoutException  
+	 * 
+	 * @see PlaylistContainer
 	 */
-	public PlaylistContainer playlists(){
+	public PlaylistContainer playlistContainer() throws TimeoutException {
 		/* Create channel callback. */
 		ChannelCallback callback = new ChannelCallback();
 		
-		/* Send stored playlists request. */
+		/* Send request and parse response. */
 		try{
-			this.protocol.sendUserPlaylistsRequest(callback);
+			this.protocol.sendPlaylistRequest(callback, null);
+			
+			/* Create and return playlist. */
+			return XMLPlaylistParser.parsePlaylistContainer(
+				callback.get(this.timeout, this.unit), "UTF-8"
+			);
 		}
 		catch(ProtocolException e){
 			return PlaylistContainer.EMPTY;
 		}
-		
-		/* Get data and inflate it. */
-		try{
-			byte[] data = callback.get(this.timeout, this.unit);
-			
-			/* Load XML. */
-			XMLElement playlistElement = XML.load(
-				"<?xml version=\"1.0\" encoding=\"utf-8\" ?><playlist>" +
-				new String(data, Charset.forName("UTF-8")) +
-				"</playlist>"
-			);
-			
-			/* Create an return list. */
-			return PlaylistContainer.fromXMLElement(playlistElement);
-		}
-		catch(Exception e){
-			return PlaylistContainer.EMPTY;
-		}
 	}
 	
 	/**
-	 * Add a playlist to the end of the list of stored playlists.
+	 * Add a playlist to a playlist container.
 	 * 
-	 * @param playlists A {@link PlaylistContainer} to add the playlist to.
-	 * @param playlist  The {@link Playlist} to be added.
+	 * @param playlistContainer A {@link PlaylistContainer} to add the playlist to.
+	 * @param playlist          The {@link Playlist} to be added.
 	 * 
 	 * @return true on success and false on failure.
 	 * 
 	 * @see PlaylistContainer
 	 */
-	public boolean playlistsAddPlaylist(PlaylistContainer playlists, Playlist playlist){
-		return this.playlistsAddPlaylist(playlists, playlist, playlists.getPlaylists().size());
+	public boolean playlistContainerAddPlaylist(PlaylistContainer playlistContainer, Playlist playlist) throws TimeoutException {
+		return this.playlistContainerAddPlaylist(playlistContainer, playlist, playlistContainer.getPlaylists().size());
 	}
 	
 	/**
-	 * Add a playlist to the list of stored playlists.
+	 * Add a playlist to a playlist container.
 	 * 
-	 * @param playlists A {@link PlaylistContainer} to add the playlist to.
-	 * @param playlist  The {@link Playlist} to be added.
-	 * @param position  The target position of the playlist.
+	 * @param playlistContainer The playlist container.
+	 * @param playlist          The playlist to be added.
+	 * @param position          The target position of the added playlist.
 	 * 
 	 * @return true on success and false on failure.
-	 * 
-	 * @see PlaylistContainer
 	 */
-	public boolean playlistsAddPlaylist(PlaylistContainer playlists, Playlist playlist, int position){
-		String user = this.session.getUsername();
+	public boolean playlistContainerAddPlaylist(PlaylistContainer playlistContainer, Playlist playlist, int position) throws TimeoutException {
+		List<Playlist> playlists = new ArrayList<Playlist>();
 		
-		/* First add the playlist to calculate the new checksum. */
-		playlists.getPlaylists().add(position, playlist);
+		playlists.add(playlist);
 		
-		String xml = String.format(
-			"<change><ops><add><i>%d</i><items>%s02</items></add></ops>" +
-			"<time>%d</time><user>%s</user></change>" +
-			"<version>%010d,%010d,%010d,0</version>",
-			position, playlist.getId(), new Date().getTime() / 1000, user,
-			playlists.getRevision() + 1, playlists.getPlaylists().size(),
-			playlists.getChecksum()
-		);
+		return this.playlistContainerAddPlaylists(playlistContainer, playlists, position);
+	}
+	
+	/**
+	 * Add multiple playlists to a playlist container.
+	 * 
+	 * @param playlistContainer The playlist container.
+	 * @param playlists         A {@link List} of playlists to be added.
+	 * @param position          The target position of the added playlists.
+	 * 
+	 * @return true on success and false on failure.
+	 */
+	public boolean playlistContainerAddPlaylists(PlaylistContainer playlistContainer, List<Playlist> playlists, int position) throws TimeoutException {
+		String  user      = this.session.getUsername();
+		long    timestamp = new Date().getTime() / 1000;
 		
-		/* Remove the playlist again, because we need the old checksum for sending. */
-		playlists.getPlaylists().remove(position);
+		/* Add the playlists for new checksum calculation. */
+		playlistContainer.getPlaylists().addAll(position, playlists);
+		
+		/* Build a comma separated list of tracks and append '01' to every id!. */
+		String playlistList = "";
+		
+		for(int i = 0; i < playlists.size(); i++){
+			playlistList += ((i > 0)?",":"") + playlists.get(i).getId() + "02";
+		}
+		
+		/* Create XML builder. */
+		XMLBuilder xml = XMLBuilder.create()
+			.element("change")
+				.element("ops")
+					.element("add")
+						.element("i", "%d", position).up()
+						.element("items", playlistList).up()
+					.up()
+				.up()
+				.element("time", "%d", timestamp).up()
+				.element("user", user).up()
+			.up()
+			.element(
+				"version", "%010d,%010d,%010d,0",
+				playlistContainer.getRevision() + 1,
+				playlistContainer.getPlaylists().size(),
+				playlistContainer.getChecksum()
+			).up();
+		
+		/* Remove the tracks again. */
+		for(int i = 0; i < playlists.size(); i++){
+			playlistContainer.getPlaylists().remove(position);
+		}
 		
 		/* Create channel callback */
 		ChannelCallback callback = new ChannelCallback();
 		
-		/* Send change playlists request. */
+		/* Send change playlist request. */
 		try{
-			this.protocol.sendChangeUserPlaylists(callback, playlists, xml);
+			this.protocol.sendChangePlaylistContainer(callback, playlistContainer, xml.toString());
 		}
 		catch(ProtocolException e){
 			return false;
@@ -628,50 +674,152 @@ public class JotifyConnection implements Jotify, CommandListener {
 		/* Get response. */
 		byte[] data = callback.get(this.timeout, this.unit);
 		
-		XMLElement playlistElement = XML.load(
-			"<?xml version=\"1.0\" encoding=\"utf-8\" ?><playlist>" +
-			new String(data, Charset.forName("UTF-8")) +
-			"</playlist>"
-		);		
+		/* Check confirmation. */
+		PlaylistConfirmation confirmation = XMLPlaylistParser.parseConfirmation(data, "UTF-8");
 		
-		/* Check for success. */
-		if(playlistElement.hasChild("confirm")){
-			/* Split version string into parts. */
-			String[] parts = playlistElement.getChild("confirm").getChildText("version").split(",", 4);
-			
-			/* Set values. */
-			playlists.setRevision(Long.parseLong(parts[0]));
-			
-			/* Add the track, since operation was successful. */
-			playlists.getPlaylists().add(position, playlist);
-			
-			if(playlists.getChecksum() != Long.parseLong(parts[2])){
-				System.out.println("Checksum error!");
-			}
-			
-			return true;
+		if(confirmation == null){
+			return false;
 		}
 		
-		return false;
+		/* Add the tracks, since operation was successful. */
+		playlistContainer.getPlaylists().addAll(position, playlists);
+		
+		/* Set new revision. */
+		playlistContainer.setRevision(confirmation.getRevision());
+		
+		return true;
 	}
 	
-	// TODO: playlistsAddPlaylists, playlistsRemovePlaylist(s), playlistsMovePlaylist(s)
+	// TODO: playlistsMovePlaylist(s)
+	
+	/**
+	 * Remove a playlist from a playlist container.
+	 * 
+	 * @param playlistContainer The playlist container.
+	 * @param position          The position of the playlist to remove.
+	 * 
+	 * @return true on success and false on failure.
+	 */
+	public boolean playlistContainerRemovePlaylist(PlaylistContainer playlistContainer, int position) throws TimeoutException {
+		return this.playlistContainerRemovePlaylists(playlistContainer, position, 1);
+	}
+	
+	/**
+	 * Remove multiple playlists from a playlist container.
+	 * 
+	 * @param playlistContainer The playlist container.
+	 * @param position          The position of the tracks to remove.
+	 * @param count             The number of track to remove.
+	 * 
+	 * @return true on success and false on failure.
+	 */
+	public boolean playlistContainerRemovePlaylists(PlaylistContainer playlistContainer, int position, int count) throws TimeoutException {
+		String user      = this.session.getUsername();
+		long   timestamp = new Date().getTime() / 1000;
+		
+		/* Create a sublist view (important!) and clone it by constructing a new ArrayList. */
+		List<Playlist> playlists = new ArrayList<Playlist>(
+			playlistContainer.getPlaylists().subList(position, position + count)
+		);
+		
+		/* First remove the playlist(s) to calculate the new checksum. */
+		for(int i = 0; i < playlists.size(); i++){
+			playlistContainer.getPlaylists().remove(position);
+		}
+		
+		/* Create XML builder. */
+		XMLBuilder xml = XMLBuilder.create()
+			.element("change")
+				.element("ops")
+					.element("del")
+						.element("i", "%d", position).up()
+						.element("k", "%d", count).up()
+					.up()
+				.up()
+				.element("time", "%d", timestamp).up()
+				.element("user", user).up()
+			.up()
+			.element(
+				"version", "%010d,%010d,%010d,0",
+				playlistContainer.getRevision() + 1,
+				playlistContainer.getPlaylists().size(),
+				playlistContainer.getChecksum()
+			).up();
+		
+		/* Add the playlist(s) again, because we need the old checksum for sending. */
+		playlistContainer.getPlaylists().addAll(position, playlists);
+		
+		/* Create channel callback */
+		ChannelCallback callback = new ChannelCallback();
+		
+		/* Send change playlist request. */
+		try{
+			this.protocol.sendChangePlaylistContainer(callback, playlistContainer, xml.toString());
+		}
+		catch(ProtocolException e){
+			return false;
+		}
+		
+		/* Get response. */
+		byte[] data = callback.get(this.timeout, this.unit);
+		
+		/* Check confirmation. */
+		PlaylistConfirmation confirmation = XMLPlaylistParser.parseConfirmation(data, "UTF-8");
+		
+		if(confirmation == null){
+			return false;
+		}
+		
+		/* Remove the playlist(s), since operation was successful. */
+		for(int i = 0; i < playlists.size(); i++){
+			playlistContainer.getPlaylists().remove(position);
+		}
+		
+		/* Set new revision. */
+		playlistContainer.setRevision(confirmation.getRevision());
+		
+		return true;
+	}
 	
 	/**
 	 * Get a playlist.
 	 * 
-	 * @param id       Id of the playlist to load.
-	 * @param useCache Whether to use a cached version if available or not.
+	 * @param id     Id of the playlist to load.
+	 * @param cached Whether to use a cached version if available or not.
 	 * 
 	 * @return A {@link Playlist} object or null on failure.
 	 * 
 	 * @see Playlist
 	 */
-	public Playlist playlist(String id, boolean useCache){
+	public Playlist playlist(String id, boolean cached) throws TimeoutException {
+		/*
+		 * Check if id is a 32-character hex string,
+		 * if not try to parse it as a Spotify URI.
+		 */
+		if(id.length() != 32 && !Hex.isHex(id)){
+			try{
+				Link link = Link.create(id);
+				
+				if(!link.isPlaylistLink()){
+					throw new IllegalArgumentException(
+						"Given Spotify URI is not a playlist URI."
+					);
+				}
+				
+				id = link.getId();
+			}
+			catch(InvalidSpotifyURIException e){
+				throw new IllegalArgumentException(
+					"Given id is neither a 32-character " +
+					"hex string nor a valid Spotify URI."
+				);
+			}
+		}
+		
 		/* Data buffer. */
 		byte[] data;
 		
-		if(useCache && this.cache != null && this.cache.contains("playlist", id)){
+		if(cached && this.cache != null && this.cache.contains("playlist", id)){
 			data = this.cache.load("playlist", id);
 		}
 		else{
@@ -686,7 +834,7 @@ public class JotifyConnection implements Jotify, CommandListener {
 				return null;
 			}
 			
-			/* Get data and inflate it. */
+			/* Get data. */
 			data = callback.get(this.timeout, this.unit);
 			
 			/* Save data to cache. */
@@ -695,15 +843,8 @@ public class JotifyConnection implements Jotify, CommandListener {
 			}
 		}
 		
-		/* Load XML. */
-		XMLElement playlistElement = XML.load(
-			"<?xml version=\"1.0\" encoding=\"utf-8\" ?><playlist>" +
-			new String(data, Charset.forName("UTF-8")) +
-			"</playlist>"
-		);
-		
 		/* Create and return playlist. */
-		return Playlist.fromXMLElement(playlistElement, id);
+		return XMLPlaylistParser.parsePlaylist(data, "UTF-8", id);
 	}
 	
 	/**
@@ -715,39 +856,58 @@ public class JotifyConnection implements Jotify, CommandListener {
 	 * 
 	 * @see Playlist
 	 */
-	public Playlist playlist(String id){
+	public Playlist playlist(String id) throws TimeoutException {
 		return this.playlist(id, false);
 	}
 	
 	/**
 	 * Create a playlist.
+	 * <br><br>
+	 * <font color="red"><b>Note:</b> This just creates a playlist,
+	 * but doesn't add it to the playlist container!</font>
 	 * 
 	 * @param name          The name of the playlist to create.
 	 * @param collaborative If the playlist shall be collaborative.
+	 * @param description   A description of the playlist.
+	 * @param picture       An image id to associate with this playlist.
 	 * 
 	 * @return A {@link Playlist} object or null on failure.
 	 * 
 	 * @see Playlist
+	 * @see #playlistContainerAddPlaylist(PlaylistContainer, Playlist)
+	 * @see #playlistContainerAddPlaylist(PlaylistContainer, Playlist, int)
+	 * @see #playlistContainerAddPlaylists(PlaylistContainer, List, int)
 	 */
-	public Playlist playlistCreate(String name, boolean collaborative){
-		String   id       = Hex.toHex(RandomBytes.randomBytes(16));
-		String   user     = this.session.getUsername();
-		Playlist playlist = new Playlist(id, name, user, collaborative);
+	public Playlist playlistCreate(String name, boolean collaborative, String description, String picture) throws TimeoutException {
+		String     id        = Hex.toHex(RandomBytes.randomBytes(16));
+		String     user      = this.session.getUsername();
+		long       timestamp = new Date().getTime() / 1000;
+		Playlist   playlist  = new Playlist(id, name, user, collaborative);
 		
-		String xml = String.format(
-			"<id-is-unique/><change><ops><create/><name>%s</name></ops>" +
-			"<time>%d</time><user>%s</user></change>" +
-			"<version>0000000001,0000000000,0000000001,%d</version>",
-			playlist.getName(), new Date().getTime() / 1000,
-			playlist.getAuthor(), playlist.isCollaborative()?1:0
-		);
+		/* Create XML builder. */
+		XMLBuilder xml = XMLBuilder.create()
+			.element("id-is-unique").up()
+			.element("change")
+				.element("ops")
+					.element("create").up()
+					.element("name", name).up()
+					.element("description", description).up()
+					.element("picture", picture).up()
+				.up()
+				.element("time", "%d", timestamp).up()
+				.element("user", user).up()
+			.up()
+			.element(
+				"version", "0000000001,0000000000,0000000001,%d",
+				collaborative?1:0
+			).up();
 		
 		/* Create channel callback */
 		ChannelCallback callback = new ChannelCallback();
 		
 		/* Send change playlist request. */
 		try{
-			this.protocol.sendCreatePlaylist(callback, playlist, xml);
+			this.protocol.sendCreatePlaylist(callback, playlist, xml.toString());
 		}
 		catch(ProtocolException e){
 			return null;
@@ -756,29 +916,126 @@ public class JotifyConnection implements Jotify, CommandListener {
 		/* Get response. */
 		byte[] data = callback.get(this.timeout, this.unit);
 		
-		XMLElement playlistElement = XML.load(
-			"<?xml version=\"1.0\" encoding=\"utf-8\" ?><playlist>" +
-			new String(data, Charset.forName("UTF-8")) +
-			"</playlist>"
-		);		
+		/* Check confirmation. */
+		PlaylistConfirmation confirmation = XMLPlaylistParser.parseConfirmation(data, "UTF-8");
 		
-		/* Check for success. */
-		if(playlistElement.hasChild("confirm")){
-			/* Split version string into parts. */
-			String[] parts = playlistElement.getChild("confirm").getChildText("version").split(",", 4);
-			
-			/* Set values. */
-			playlist.setRevision(Long.parseLong(parts[0]));
-			playlist.setCollaborative(Integer.parseInt(parts[3]) == 1);
-			
-			if(playlist.getChecksum() != Long.parseLong(parts[2])){
-				System.out.println("Checksum error!");
-			}
-			
-			return playlist;
+		if(confirmation == null){
+			return null;			
 		}
 		
-		return null;
+		/* Set new revision and collaborative flag. */
+		playlist.setRevision(confirmation.getRevision());
+		playlist.setCollaborative(confirmation.isCollaborative());
+		
+		return playlist;
+	}
+	
+	/**
+	 * Create a playlist.
+	 * 
+	 * @param name The name of the playlist to create.
+	 * 
+	 * @return A {@link Playlist} object or null on failure.
+	 * 
+	 * @see Playlist
+	 */
+	public Playlist playlistCreate(String name) throws TimeoutException {
+		return this.playlistCreate(name, false, null, null);
+	}
+	
+	/**
+	 * Create a playlist from a given album.
+	 * 
+	 * @param sourceAlbum An {@link Album} object
+	 * 
+	 * @return A {@link Playlist} object or null on failure.
+	 * 
+	 * @see Playlist
+	 * @see Album
+	 */
+	public Playlist playlistCreate(Album sourceAlbum) throws TimeoutException {
+		/* Browse album. */
+		Album  album       = this.browse(sourceAlbum);
+		String name        = String.format("%s - %s", album.getArtist().getName(), album.getName());
+		String description = String.format("Released in %d", album.getYear());
+		
+		/* Create playlist from album. */
+		Playlist playlist = this.playlistCreate(name, false, description, album.getCover());
+		
+		if(playlist != null && this.playlistAddTracks(playlist, album.getTracks(), 0)){
+			return playlist;
+		}
+		else{
+			this.playlistDestroy(playlist);
+		}
+		
+		return playlist;
+	}
+	
+	/**
+	 * Destroy a playlist.
+	 * 
+	 * @param playlist The playlist to destroy.
+	 * 
+	 * @return true if the playlist was successfully destroyed, false otherwise.
+	 * 
+	 * @see Playlist
+	 */
+	public boolean playlistDestroy(Playlist playlist) throws TimeoutException {
+		String     user      = this.session.getUsername();
+		long       timestamp = new Date().getTime() / 1000;
+		
+		/* Create XML builder. */
+		XMLBuilder xml = XMLBuilder.create()
+			.element("change")
+				.element("ops")
+					.element("destroy").up()
+				.up()
+				.element("time", "%d", timestamp).up()
+				.element("user", user).up()
+			.up()
+			.element(
+				"version", "%010d,%010d,%010d,%d",
+				playlist.getRevision() + 1,
+				playlist.getTracks().size(),
+				playlist.getChecksum(),
+				playlist.isCollaborative()?1:0
+			).up();
+		
+		/* Create channel callback */
+		ChannelCallback callback = new ChannelCallback();
+		
+		/* Send change playlist request. */
+		try{
+			this.protocol.sendChangePlaylist(callback, playlist, xml.toString());
+		}
+		catch(ProtocolException e){
+			return false;
+		}
+		
+		/* Get response. */
+		byte[] data = callback.get(this.timeout, this.unit);
+		
+		/* Check confirmation. */
+		PlaylistConfirmation confirmation = XMLPlaylistParser.parseConfirmation(data, "UTF-8");
+		
+		if(confirmation == null){
+			return false;			
+		}
+		
+		return true;
+	}
+	
+	/**
+	 * Add a track to a playlist.
+	 * 
+	 * @param playlist The playlist.
+	 * @param track    The track to be added.
+	 * 
+	 * @return true on success and false on failure.
+	 */
+	public boolean playlistAddTrack(Playlist playlist, Track track) throws TimeoutException {
+		return this.playlistAddTrack(playlist, track, playlist.getTracks().size());
 	}
 	
 	/**
@@ -790,7 +1047,7 @@ public class JotifyConnection implements Jotify, CommandListener {
 	 * 
 	 * @return true on success and false on failure.
 	 */
-	public boolean playlistAddTrack(Playlist playlist, Track track, int position){
+	public boolean playlistAddTrack(Playlist playlist, Track track, int position) throws TimeoutException {
 		List<Track> tracks = new ArrayList<Track>();
 		
 		tracks.add(track);
@@ -807,15 +1064,16 @@ public class JotifyConnection implements Jotify, CommandListener {
 	 * 
 	 * @return true on success and false on failure.
 	 */
-	public boolean playlistAddTracks(Playlist playlist, List<Track> tracks, int position){
-		String user = this.session.getUsername();
+	public boolean playlistAddTracks(Playlist playlist, List<Track> tracks, int position) throws TimeoutException {
+		String  user      = this.session.getUsername();
+		long    timestamp = new Date().getTime() / 1000;
 		
 		/* Check if user is allowed to edit playlist. */
 		if(!playlist.isCollaborative() && !playlist.getAuthor().equals(user)){
 			return false;
 		}
 		
-		/* First add the tracks to calculate the new checksum. */
+		/* Add the tracks for new checksum calculation. */
 		playlist.getTracks().addAll(position, tracks);
 		
 		/* Build a comma separated list of tracks and append '01' to every id!. */
@@ -825,16 +1083,27 @@ public class JotifyConnection implements Jotify, CommandListener {
 			trackList += ((i > 0)?",":"") + tracks.get(i).getId() + "01";
 		}
 		
-		String xml = String.format(
-			"<change><ops><add><i>%d</i><items>%s</items></add></ops>" +
-			"<time>%d</time><user>%s</user></change>" +
-			"<version>%010d,%010d,%010d,%d</version>",
-			position, trackList, new Date().getTime() / 1000, user,
-			playlist.getRevision() + 1, playlist.getTracks().size(),
-			playlist.getChecksum(), playlist.isCollaborative()?1:0
-		);
+		/* Create XML builder. */
+		XMLBuilder xml = XMLBuilder.create()
+			.element("change")
+				.element("ops")
+					.element("add")
+						.element("i", "%d", position).up()
+						.element("items", trackList).up()
+					.up()
+				.up()
+				.element("time", "%d", timestamp).up()
+				.element("user", user).up()
+			.up()
+			.element(
+				"version", "%010d,%010d,%010d,%d",
+				playlist.getRevision() + 1,
+				playlist.getTracks().size(),
+				playlist.getChecksum(),
+				playlist.isCollaborative()?1:0
+			).up();
 		
-		/* Remove the tracks again, because we need the old checksum for sending. */
+		/* Remove the tracks again. */
 		for(int i = 0; i < tracks.size(); i++){
 			playlist.getTracks().remove(position);
 		}
@@ -844,7 +1113,7 @@ public class JotifyConnection implements Jotify, CommandListener {
 		
 		/* Send change playlist request. */
 		try{
-			this.protocol.sendChangePlaylist(callback, playlist, xml);
+			this.protocol.sendChangePlaylist(callback, playlist, xml.toString());
 		}
 		catch(ProtocolException e){
 			return false;
@@ -853,32 +1122,21 @@ public class JotifyConnection implements Jotify, CommandListener {
 		/* Get response. */
 		byte[] data = callback.get(this.timeout, this.unit);
 		
-		XMLElement playlistElement = XML.load(
-			"<?xml version=\"1.0\" encoding=\"utf-8\" ?><playlist>" +
-			new String(data, Charset.forName("UTF-8")) +
-			"</playlist>"
-		);
+		/* Check confirmation. */
+		PlaylistConfirmation confirmation = XMLPlaylistParser.parseConfirmation(data, "UTF-8");
 		
-		/* Check for success. */
-		if(playlistElement.hasChild("confirm")){
-			/* Split version string into parts. */
-			String[] parts = playlistElement.getChild("confirm").getChildText("version").split(",", 4);
-			
-			/* Set values. */
-			playlist.setRevision(Long.parseLong(parts[0]));
-			playlist.setCollaborative(Integer.parseInt(parts[3]) == 1);
-			
-			/* Add the tracks, since operation was successful. */
-			playlist.getTracks().addAll(position, tracks);
-			
-			if(playlist.getChecksum() != Long.parseLong(parts[2])){
-				System.out.println("Checksum error!");
-			}
-			
-			return true;
+		if(confirmation == null){
+			return false;
 		}
 		
-		return false;
+		/* Add the tracks, since operation was successful. */
+		playlist.getTracks().addAll(position, tracks);
+		
+		/* Set new revision and collaborative flag. */
+		playlist.setRevision(confirmation.getRevision());
+		playlist.setCollaborative(confirmation.isCollaborative());
+		
+		return true;
 	}
 	
 	/**
@@ -889,7 +1147,7 @@ public class JotifyConnection implements Jotify, CommandListener {
 	 * 
 	 * @return true on success and false on failure.
 	 */
-	public boolean playlistRemoveTrack(Playlist playlist, int position){
+	public boolean playlistRemoveTrack(Playlist playlist, int position) throws TimeoutException {
 		return this.playlistRemoveTracks(playlist, position, 1);
 	}
 	
@@ -902,8 +1160,9 @@ public class JotifyConnection implements Jotify, CommandListener {
 	 * 
 	 * @return true on success and false on failure.
 	 */
-	public boolean playlistRemoveTracks(Playlist playlist, int position, int count){
-		String user = this.session.getUsername();
+	public boolean playlistRemoveTracks(Playlist playlist, int position, int count) throws TimeoutException {
+		String user      = this.session.getUsername();
+		long   timestamp = new Date().getTime() / 1000;
 		
 		/* Check if user is allowed to edit playlist. */
 		if(!playlist.isCollaborative() && !playlist.getAuthor().equals(user)){
@@ -915,19 +1174,30 @@ public class JotifyConnection implements Jotify, CommandListener {
 			playlist.getTracks().subList(position, position + count)
 		);
 		
-		/* First remove the track(s) to calculate the new checksum. This needs to be done in single steps! */
+		/* First remove the track(s) to calculate the new checksum. */
 		for(int i = 0; i < tracks.size(); i++){
 			playlist.getTracks().remove(position);
 		}
 		
-		String xml = String.format(
-			"<change><ops><del><i>%d</i><k>%d</k></del></ops>" +
-			"<time>%d</time><user>%s</user></change>" +
-			"<version>%010d,%010d,%010d,%d</version>",
-			position, count, new Date().getTime() / 1000, user,
-			playlist.getRevision() + 1, playlist.getTracks().size(),
-			playlist.getChecksum(), playlist.isCollaborative()?1:0
-		);
+		/* Create XML builder. */
+		XMLBuilder xml = XMLBuilder.create()
+			.element("change")
+				.element("ops")
+					.element("del")
+						.element("i", "%d", position).up()
+						.element("k", "%d", count).up()
+					.up()
+				.up()
+				.element("time", "%d", timestamp).up()
+				.element("user", user).up()
+			.up()
+			.element(
+				"version", "%010d,%010d,%010d,%d",
+				playlist.getRevision() + 1,
+				playlist.getTracks().size(),
+				playlist.getChecksum(),
+				playlist.isCollaborative()?1:0
+			).up();
 		
 		/* Add the track(s) again, because we need the old checksum for sending. */
 		playlist.getTracks().addAll(position, tracks);
@@ -937,7 +1207,7 @@ public class JotifyConnection implements Jotify, CommandListener {
 		
 		/* Send change playlist request. */
 		try{
-			this.protocol.sendChangePlaylist(callback, playlist, xml);
+			this.protocol.sendChangePlaylist(callback, playlist, xml.toString());
 		}
 		catch(ProtocolException e){
 			return false;
@@ -946,34 +1216,23 @@ public class JotifyConnection implements Jotify, CommandListener {
 		/* Get response. */
 		byte[] data = callback.get(this.timeout, this.unit);
 		
-		XMLElement playlistElement = XML.load(
-			"<?xml version=\"1.0\" encoding=\"utf-8\" ?><playlist>" +
-			new String(data, Charset.forName("UTF-8")) +
-			"</playlist>"
-		);
+		/* Check confirmation. */
+		PlaylistConfirmation confirmation = XMLPlaylistParser.parseConfirmation(data, "UTF-8");
 		
-		/* Check for success. */
-		if(playlistElement.hasChild("confirm")){
-			/* Split version string into parts. */
-			String[] parts = playlistElement.getChild("confirm").getChildText("version").split(",", 4);
-			
-			/* Set values. */
-			playlist.setRevision(Long.parseLong(parts[0]));
-			playlist.setCollaborative(Integer.parseInt(parts[3]) == 1);
-			
-			/* Remove the track(s), since operation was successful. */
-			for(int i = 0; i < tracks.size(); i++){
-				playlist.getTracks().remove(position);
-			}
-			
-			if(playlist.getChecksum() != Long.parseLong(parts[2])){
-				System.out.println("Checksum error!");
-			}
-			
-			return true;
+		if(confirmation == null){
+			return false;
 		}
 		
-		return false;
+		/* Remove the track(s), since operation was successful. */
+		for(int i = 0; i < tracks.size(); i++){
+			playlist.getTracks().remove(position);
+		}
+		
+		/* Set new revision and collaborative flag. */
+		playlist.setRevision(confirmation.getRevision());
+		playlist.setCollaborative(confirmation.isCollaborative());
+		
+		return true;
 	}
 	
 	// TODO: playlistMoveTrack(s) : <mov><i>6</i><j>2</j></mov>
@@ -988,29 +1247,38 @@ public class JotifyConnection implements Jotify, CommandListener {
 	 * 
 	 * @see Playlist
 	 */
-	public boolean playlistRename(Playlist playlist, String name){
-		String user = this.session.getUsername();
+	public boolean playlistRename(Playlist playlist, String name) throws TimeoutException {
+		String user      = this.session.getUsername();
+		long   timestamp = new Date().getTime() / 1000;
 		
 		/* Check if user is allowed to rename playlist. */
 		if(!playlist.getAuthor().equals(user)){
 			return false;
 		}
 		
-		String xml = String.format(
-			"<change><ops><name>%s</name></ops>" +
-			"<time>%d</time><user>%s</user></change>" +
-			"<version>%010d,%010d,%010d,%d</version>",
-			name, new Date().getTime() / 1000, user,
-			playlist.getRevision() + 1, playlist.getTracks().size(),
-			playlist.getChecksum(), playlist.isCollaborative()?1:0
-		);
+		/* Create XML builder. */
+		XMLBuilder xml = XMLBuilder.create()
+			.element("change")
+				.element("ops")
+					.element("name", name).up()
+				.up()
+				.element("time", "%d", timestamp).up()
+				.element("user", user).up()
+			.up()
+			.element(
+				"version", "%010d,%010d,%010d,%d",
+				playlist.getRevision() + 1,
+				playlist.getTracks().size(),
+				playlist.getChecksum(),
+				playlist.isCollaborative()?1:0
+			).up();
 		
 		/* Create channel callback */
 		ChannelCallback callback = new ChannelCallback();
 		
 		/* Send change playlist request. */
 		try{
-			this.protocol.sendChangePlaylist(callback, playlist, xml);
+			this.protocol.sendChangePlaylist(callback, playlist, xml.toString());
 		}
 		catch(ProtocolException e){
 			return false;
@@ -1019,29 +1287,21 @@ public class JotifyConnection implements Jotify, CommandListener {
 		/* Get response. */
 		byte[] data = callback.get(this.timeout, this.unit);
 		
-		XMLElement playlistElement = XML.load(
-			"<?xml version=\"1.0\" encoding=\"utf-8\" ?><playlist>" +
-			new String(data, Charset.forName("UTF-8")) +
-			"</playlist>"
-		);		
+		/* Check confirmation. */
+		PlaylistConfirmation confirmation = XMLPlaylistParser.parseConfirmation(data, "UTF-8");
 		
-		if(playlistElement.hasChild("confirm")){
-			/* Split version string into parts. */
-			String[] parts = playlistElement.getChild("confirm").getChildText("version").split(",", 4);
-			
-			/* Set values. */
-			playlist.setRevision(Long.parseLong(parts[0]));
-			playlist.setCollaborative(Integer.parseInt(parts[3]) == 1);
-			playlist.setName(name);
-			
-			if(playlist.getChecksum() != Long.parseLong(parts[2])){
-				System.out.println("Checksum error!");
-			}
-			
-			return true;
+		if(confirmation == null){
+			return false;
 		}
 		
-		return false;
+		/* Set name, since operation was successful. */
+		playlist.setName(name);
+		
+		/* Set new revision and collaborative flag. */
+		playlist.setRevision(confirmation.getRevision());
+		playlist.setCollaborative(confirmation.isCollaborative());
+		
+		return true;
 	}
 	
 	/**
@@ -1054,29 +1314,38 @@ public class JotifyConnection implements Jotify, CommandListener {
 	 * 
 	 * @see Playlist
 	 */
-	public boolean playlistSetCollaborative(Playlist playlist, boolean collaborative){
-		String user = this.session.getUsername();
+	public boolean playlistSetCollaborative(Playlist playlist, boolean collaborative) throws TimeoutException {
+		String user      = this.session.getUsername();
+		long   timestamp = new Date().getTime() / 1000;
 		
 		/* Check if user is allowed to set playlist collaboration. */
 		if(!playlist.getAuthor().equals(user)){
 			return false;
 		}
 		
-		String xml = String.format(
-			"<change><ops><pub>%d</pub></ops>" +
-			"<time>%d</time><user>%s</user></change>" +
-			"<version>%010d,%010d,%010d,%d</version>",
-			collaborative?1:0, new Date().getTime() / 1000, user,
-			playlist.getRevision() + 1, playlist.getTracks().size(),
-			playlist.getChecksum(), playlist.isCollaborative()?1:0
-		);
+		/* Create XML builder. */
+		XMLBuilder xml = XMLBuilder.create()
+			.element("change")
+				.element("ops")
+					.element("pub", "%d", collaborative).up()
+				.up()
+				.element("time", "%d", timestamp).up()
+				.element("user", user).up()
+			.up()
+			.element(
+				"version", "%010d,%010d,%010d,%d",
+				playlist.getRevision() + 1,
+				playlist.getTracks().size(),
+				playlist.getChecksum(),
+				playlist.isCollaborative()?1:0
+			).up();
 		
 		/* Create channel callback */
 		ChannelCallback callback = new ChannelCallback();
 		
 		/* Send change playlist request. */
 		try{
-			this.protocol.sendChangePlaylist(callback, playlist, xml);
+			this.protocol.sendChangePlaylist(callback, playlist, xml.toString());
 		}
 		catch(ProtocolException e){
 			return false;
@@ -1085,28 +1354,88 @@ public class JotifyConnection implements Jotify, CommandListener {
 		/* Get response. */
 		byte[] data = callback.get(this.timeout, this.unit);
 		
-		XMLElement playlistElement = XML.load(
-			"<?xml version=\"1.0\" encoding=\"utf-8\" ?><playlist>" +
-			new String(data, Charset.forName("UTF-8")) +
-			"</playlist>"
-		);		
+		/* Check confirmation. */
+		PlaylistConfirmation confirmation = XMLPlaylistParser.parseConfirmation(data, "UTF-8");
 		
-		if(playlistElement.hasChild("confirm")){
-			/* Split version string into parts. */
-			String[] parts = playlistElement.getChild("confirm").getChildText("version").split(",", 4);
-			
-			/* Set values. */
-			playlist.setRevision(Long.parseLong(parts[0]));
-			playlist.setCollaborative(Integer.parseInt(parts[3]) == 1);
-			
-			if(playlist.getChecksum() != Long.parseLong(parts[2])){
-				System.out.println("Checksum error!");
-			}
-			
-			return true;
+		if(confirmation == null){
+			return false;
 		}
 		
-		return false;
+		/* Set new revision and collaborative flag. */
+		playlist.setRevision(confirmation.getRevision());
+		playlist.setCollaborative(confirmation.isCollaborative());
+		
+		return true;
+	}
+	
+	/**
+	 * Set playlist information.
+	 * 
+	 * @param playlist    The {@link Playlist} to change.
+	 * @param description The description to set.
+	 * @param picture     The picture to set.
+	 * 
+	 * @return true on success or false on failure.
+	 * 
+	 * @see Playlist
+	 */
+	public boolean playlistSetInformation(Playlist playlist, String description, String picture) throws TimeoutException {
+		String user      = this.session.getUsername();
+		long   timestamp = new Date().getTime() / 1000;
+		
+		/* Check if user is allowed to change playlist details. */
+		if(!playlist.getAuthor().equals(user)){
+			return false;
+		}
+		
+		/* Create XML builder. */
+		XMLBuilder xml = XMLBuilder.create()
+			.element("change")
+				.element("ops")
+					.element("description", description).up()
+					.element("picture", picture).up()
+				.up()
+				.element("time", "%d", timestamp).up()
+				.element("user", user).up()
+			.up()
+			.element(
+				"version", "%010d,%010d,%010d,%d",
+				playlist.getRevision() + 1,
+				playlist.getTracks().size(),
+				playlist.getChecksum(),
+				playlist.isCollaborative()?1:0
+			).up();
+		
+		/* Create channel callback */
+		ChannelCallback callback = new ChannelCallback();
+		
+		/* Send change playlist request. */
+		try{
+			this.protocol.sendChangePlaylist(callback, playlist, xml.toString());
+		}
+		catch(ProtocolException e){
+			return false;
+		}
+		
+		/* Get response. */
+		byte[] data = callback.get(this.timeout, this.unit);
+		
+		/* Check confirmation. */
+		PlaylistConfirmation confirmation = XMLPlaylistParser.parseConfirmation(data, "UTF-8");
+		
+		if(confirmation == null){
+			return false;
+		}
+		
+		/* Set metadata, since the operation was successful. */
+		playlist.setDescription(description);
+		playlist.setPicture(picture);
+		
+		/* Set new revision and collaborative flag. */
+		playlist.setRevision(confirmation.getRevision());
+		playlist.setCollaborative(confirmation.isCollaborative());
+		
+		return true;
 	}
 	
 	/**
@@ -1115,10 +1444,9 @@ public class JotifyConnection implements Jotify, CommandListener {
 	 * @param track    A {@link Track} object identifying the track to be played.
 	 * @param listener A {@link PlaybackListener} receiving playback status updates.
 	 */
-	public void play(Track track, PlaybackListener listener){
+	public void play(Track track, PlaybackListener listener) throws TimeoutException {
 		/* Create channel callbacks. */
-		ChannelCallback       callback       = new ChannelCallback();
-		ChannelHeaderCallback headerCallback = new ChannelHeaderCallback();
+		ChannelCallback callback = new ChannelCallback();
 		
 		/* Send play request (token notify + AES key). */
 		try{
@@ -1131,26 +1459,9 @@ public class JotifyConnection implements Jotify, CommandListener {
 		/* Get AES key. */
 		byte[] key = callback.get(this.timeout, this.unit);
 		
-		/* Send header request to check for HTTP stream. */
-		try{
-			this.protocol.sendSubstreamRequest(headerCallback, track, 0, 0);
-		}
-		catch(ProtocolException e){
-			return;
-		}
-		
-		/* Get list of HTTP stream URLs. */
-		List<String> urls = headerCallback.get(this.timeout, this.unit);
-		
-		/* If we got 4 HTTP stream URLs use them, otherwise use default channel streaming. */
-		if(urls.size() == 4){
-			this.player = new HTTPStreamPlayer(urls, track, key, listener);
-			this.player.volume(this.volume);
-		}
-		else{
-			this.player = new ChannelPlayer(this.protocol, track, key, listener);
-			this.player.volume(this.volume);
-		}
+		/* Stream channel. */
+		this.player = new ChannelPlayer(this.protocol, track, key, listener);
+		this.player.volume(this.volume);
 		
 		/* Start playing. */
 		this.play();
@@ -1286,6 +1597,9 @@ public class JotifyConnection implements Jotify, CommandListener {
 				
 				break;
 			}
+			case Command.COMMAND_PONGACK: {
+				break;
+			}
 			case Command.COMMAND_CHANNELDATA: {
 				Channel.process(payload);
 				
@@ -1332,192 +1646,30 @@ public class JotifyConnection implements Jotify, CommandListener {
 				break;
 			}
 			case Command.COMMAND_PRODINFO: {
-				XMLElement prodinfoElement = XML.load(new String(payload, Charset.forName("UTF-8")));
-				
-				this.user = User.fromXMLElement(prodinfoElement, this.user);
+				this.user = XMLUserParser.parseUser(payload, "UTF-8", this.user);
 				
 				/* Release 'prodinfo' permit. */
 				this.userSemaphore.release();
 				
-				/* Payload is uncompressed XML. */
-				if(!this.user.isPremium()){
-					System.err.println(
-						"Sorry, you need a premium account to use jotify (this is a restriction by Spotify)."
-					);
-					
-					System.exit(0);
-				}
-				
 				break;
 			}
 			case Command.COMMAND_WELCOME: {
-				/* Request ads. */
-				//this.protocol.sendAdRequest(new ChannelAdapter(), 0);
-				//this.protocol.sendAdRequest(new ChannelAdapter(), 1);
-				
 				break;
 			}
 			case Command.COMMAND_PAUSE: {
 				/* TODO: Show notification and pause. */
+				break;
+			}
+			case Command.COMMAND_PLAYLISTCHANGED: {
+				System.out.format("Playlist '%s' changed!\n", Hex.toHex(payload));
 				
 				break;
 			}
-		}
-	}
-	
-	/**
-	 * Main method for testing purposes.
-	 * 
-	 * @param args Commandline arguments.
-	 * 
-	 * @throws Exception
-	 */
-	public static void main(String[] args) throws Exception {
-		/* Create a spotify object. */
-		JotifyConnection jotify = new JotifyConnection();
-		
-		/* Create a scanner. */
-		Scanner scanner = new Scanner(System.in);
-		
-		/* Current playlist. */
-		Playlist playlist = new Playlist();
-		
-		/* Login. */
-		while(true){
-			System.out.print("Username: ");
-			String username = scanner.nextLine();
-			
-			System.out.print("Password: ");
-			String password = scanner.nextLine();
-			
-			try{
-				jotify.login(username, password);
-				
-				System.out.println("Logged in! Type 'help' to see available commands.");
+			default: {
+				System.out.format("Unknown Command: 0x%02x Length: %d\n", command, payload.length);
+				System.out.println("Data: " + new String(payload) + " " + Hex.toHex(payload));
 				
 				break;
-			}
-			catch(AuthenticationException e){
-				System.out.println("Invalid username and/or password! Try again.");
-			}
-		}
-		
-		/* Start packet IO in the background. */
-		new Thread(jotify, "JotifyConnection-Thread").start();
-		
-		/* Print user info. */
-		System.out.println(jotify.user());
-		
-		/* Wait for commands. */
-		while(true){
-			String   line     = scanner.nextLine();
-			String[] parts    = line.split(" ", 2);
-			String   command  = parts[0];
-			String   argument = (parts.length > 1)?parts[1]:null;
-			
-			if(command.equals("search")){
-				Result result = jotify.search(argument);
-
-				playlist = Playlist.fromResult(result.getQuery(), "jotify", result);
-				
-				int i = 0;
-				
-				for(Track track : result.getTracks()){
-					System.out.format(
-						"%2d | %20s - %45s | %32s\n",
-						i++,
-						track.getArtist().getName(),
-						track.getTitle(),
-						track.getId()
-					);
-					
-					if(i == 15){
-						break;
-					}
-				}
-			}
-			else if(command.equals("toplist")){
-				Result result = jotify.toplist(argument, null, null);
-				
-				playlist = Playlist.fromResult("toplist", "jotify", result);
-				
-				int i = 0;
-				
-				for(Artist artist : result.getArtists()){
-					System.out.format(
-						"%2d | %20s | %32s\n",
-						i++,
-						artist.getName(),
-						artist.getId()
-					);
-					
-					if(i == 15){
-						break;
-					}
-				}
-				
-				for(Album album : result.getAlbums()){
-					System.out.format(
-						"%2d | %20s - %45s | %32s\n",
-						i++,
-						album.getArtist().getName(),
-						album.getName(),
-						album.getId()
-					);
-					
-					if(i == 15){
-						break;
-					}
-				}
-				
-				for(Track track : result.getTracks()){
-					System.out.format(
-						"%2d | %20s - %45s | %32s\n",
-						i++,
-						track.getArtist().getName(),
-						track.getTitle(),
-						track.getId()
-					);
-					
-					if(i == 15){
-						break;
-					}
-				}
-			}
-			else if(command.equals("play")){
-				int position = Integer.parseInt(argument);
-				
-				if(position >= 0 && position < playlist.getTracks().size()){
-					Result result = jotify.browse(playlist.getTracks().get(position));
-					Track  track  = result.getTracks().get(0);				
-					
-					System.out.format("Playing: %s - %s\n", track.getArtist().getName(), track.getTitle());
-					
-					jotify.stop();
-					jotify.play(track, null);
-				}
-				else{
-					System.out.format("Position %d not available!\n", position);
-				}
-			}
-			else if(command.equals("help")){
-				System.out.println("Available commands:");
-				System.out.println("	search <query>");
-				System.out.println("	toplist <type>");
-				System.out.println("	play   <id>");
-				System.out.println("	quit");
-			}
-			else if(command.equals("quit")){
-				/* Stop playing. */
-				jotify.stop();
-				
-				/* Close connection. */
-				jotify.close();
-				
-				break;
-			}
-			else{
-				System.out.println("Unrecognized command!");
 			}
 		}
 	}

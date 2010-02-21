@@ -7,6 +7,8 @@ import java.util.concurrent.Semaphore;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 
+import de.felixbruns.jotify.util.GZIP;
+
 public class ChannelCallback implements ChannelListener {
 	private Semaphore        done;
 	private List<ByteBuffer> buffers;
@@ -50,8 +52,16 @@ public class ChannelCallback implements ChannelListener {
 			data.put(b);
 		}
 		
-		/* Return data array. */
-		return data.array();
+		/* Get data bytes. */
+		byte[] bytes = data.array();
+		
+		/* Detect GZIP magic and return inflated data. */
+		if(bytes[0] == (byte)0x1f && bytes[1] == (byte)0x8b){
+			return GZIP.inflate(bytes);
+		}
+		
+		/* Return data. */
+		return bytes;
 	}
 	
 	public byte[] get(){
@@ -62,22 +72,18 @@ public class ChannelCallback implements ChannelListener {
 		return this.getData();
 	}
 	
-	public byte[] get(long timeout, TimeUnit unit){
+	public byte[] get(long timeout, TimeUnit unit) throws TimeoutException {
 		/* Wait for data to become available. */
 		try{
 			if(!this.done.tryAcquire(timeout, unit)){
 				throw new TimeoutException("Timeout while waiting for data.");
 			}
+			
+			return this.getData();
 		}
 		catch(InterruptedException e){
-			throw new RuntimeException(e);
+			return null;
 		}
-		catch(TimeoutException e){
-			throw new RuntimeException(e);
-		}
-		
-		/* Return data array. */
-		return this.getData();
 	}
 	
 	public boolean isDone(){

@@ -3,8 +3,6 @@ package de.felixbruns.jotify.media;
 import java.util.ArrayList;
 import java.util.List;
 
-import de.felixbruns.jotify.util.XMLElement;
-
 public class Result {
 	private String       query;
 	private String       suggestion;
@@ -24,6 +22,16 @@ public class Result {
 		this.artists      = new ArrayList<Artist>();
 		this.albums       = new ArrayList<Album>();
 		this.tracks       = new ArrayList<Track>();
+	}
+	
+	/**
+	 * Create a link from this search result.
+	 * 
+	 * @return A {@link Link} object which can then
+	 * 		   be used to retreive the Spotify URI.
+	 */
+	public Link getLink(){
+		return Link.create(this);
 	}
 	
 	public String getQuery(){
@@ -100,56 +108,6 @@ public class Result {
 	
 	public void addTrack(Track track){
 		this.tracks.add(track);
-	}
-	
-	public static Result fromXMLElement(XMLElement resultElement){
-		return fromXMLElement("", resultElement);
-	}
-	
-	public static Result fromXMLElement(String query, XMLElement resultElement){
-		/* Create Result object. */
-		Result result = new Result();
-		
-		/* Set query. */
-		result.query = query;
-		
-		/* Set suggestion. */
-		if(resultElement.hasChild("did-you-mean")){
-			result.suggestion = resultElement.getChildText("did-you-mean");
-		}
-		
-		/* Set result quantities.*/
-		if(resultElement.hasChild("total-artists") &&
-			resultElement.hasChild("total-albums") &&
-			resultElement.hasChild("total-tracks")){
-			result.totalArtists = Integer.parseInt(resultElement.getChildText("total-artists"));
-			result.totalAlbums  = Integer.parseInt(resultElement.getChildText("total-albums"));
-			result.totalTracks  = Integer.parseInt(resultElement.getChildText("total-tracks"));
-		}
-		
-		/* Get artists. */
-		if(resultElement.hasChild("artists")){
-			for(XMLElement artistElement : resultElement.getChild("artists").getChildren()){
-				result.artists.add(Artist.fromXMLElement(artistElement));
-			}
-		}
-		
-		/* Get albums. */
-		if(resultElement.hasChild("albums")){
-			for(XMLElement albumElement : resultElement.getChild("albums").getChildren()){
-				result.albums.add(Album.fromXMLElement(albumElement));
-			}
-		}
-		
-		/* Get tracks. */
-		if(resultElement.hasChild("tracks")){
-			for(XMLElement trackElement : resultElement.getChild("tracks").getChildren()){
-				result.tracks.add(Track.fromXMLElement(trackElement));
-			}
-		}
-		
-		/* Return result. */
-		return result;
 	}
 	
 	public boolean equals(Object o){

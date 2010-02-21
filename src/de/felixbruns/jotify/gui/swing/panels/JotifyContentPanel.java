@@ -2,7 +2,9 @@ package de.felixbruns.jotify.gui.swing.panels;
 
 import java.awt.BorderLayout;
 import java.awt.Color;
+import java.awt.Dimension;
 import java.awt.Font;
+import java.awt.Image;
 import java.awt.Toolkit;
 import java.awt.datatransfer.StringSelection;
 import java.awt.datatransfer.Transferable;
@@ -14,9 +16,12 @@ import java.util.ArrayList;
 import java.util.Iterator;
 import java.util.LinkedList;
 import java.util.List;
+import java.util.concurrent.TimeoutException;
 
+import javax.swing.ImageIcon;
 import javax.swing.JComponent;
 import javax.swing.JEditorPane;
+import javax.swing.JLabel;
 import javax.swing.JMenuItem;
 import javax.swing.JPanel;
 import javax.swing.JPopupMenu;
@@ -29,6 +34,7 @@ import javax.swing.event.HyperlinkListener;
 import javax.swing.event.HyperlinkEvent.EventType;
 
 import de.felixbruns.jotify.Jotify;
+import de.felixbruns.jotify.gui.JotifyApplication;
 import de.felixbruns.jotify.gui.JotifyPlaybackQueue;
 import de.felixbruns.jotify.gui.listeners.BrowseListener;
 import de.felixbruns.jotify.gui.listeners.JotifyBroadcast;
@@ -40,19 +46,23 @@ import de.felixbruns.jotify.gui.swing.components.JotifyTableModel;
 import de.felixbruns.jotify.gui.swing.dnd.TrackListTransferable;
 import de.felixbruns.jotify.media.Album;
 import de.felixbruns.jotify.media.Artist;
+import de.felixbruns.jotify.media.Link;
 import de.felixbruns.jotify.media.Playlist;
 import de.felixbruns.jotify.media.Result;
 import de.felixbruns.jotify.media.Track;
+import de.felixbruns.jotify.media.Link.InvalidSpotifyURIException;
 
 @SuppressWarnings("serial")
 public class JotifyContentPanel extends JPanel implements HyperlinkListener, PlaylistListener, QueueListener, SearchListener, BrowseListener {
 	private JotifyBroadcast         broadcast;
 	private JEditorPane             infoPane;
+	private JLabel                  imageLabel;
 	private JScrollPane             scrollPane;
 	private JTable                  table;
 	private JotifyTableModel<Track> tableModel;
 	
-	private boolean isShowingQueue;
+	private ImageIcon coverImage;
+	private boolean   isShowingQueue;
 	
 	private final Jotify jotify;
 	
@@ -60,6 +70,11 @@ public class JotifyContentPanel extends JPanel implements HyperlinkListener, Pla
 		this.broadcast = JotifyBroadcast.getInstance();
 		this.jotify    = jotify;
 		
+		this.coverImage = new ImageIcon(
+			new ImageIcon(
+				JotifyApplication.class.getResource("images/cover.png")
+			).getImage().getScaledInstance(200, 200, Image.SCALE_SMOOTH)
+		);
 		this.isShowingQueue = false;
 		
 		/* Set layout to use. */
@@ -75,18 +90,28 @@ public class JotifyContentPanel extends JPanel implements HyperlinkListener, Pla
 		this.infoPane.setOpaque(false);
 		this.add(this.infoPane, BorderLayout.NORTH);
 		
+		this.imageLabel = new JLabel();
+		this.imageLabel.setOpaque(false);
+		this.imageLabel.setVerticalAlignment(JLabel.TOP);
+		this.imageLabel.setBorder(new EmptyBorder(0, 5, 0, 5));
+		this.imageLabel.setVisible(false);
+		this.imageLabel.setPreferredSize(new Dimension(210, 210));
+		this.add(this.imageLabel, BorderLayout.WEST);
+		
 		/* Create table model. */
 		this.tableModel = new JotifyTableModel<Track>();
 		
 		/* Create table. */
 		this.table = new JotifyTable(this.tableModel);
+		//TODO: implement sorting of actual list in the background to guarantee that positions match
+		//this.table.setAutoCreateRowSorter(true);
 		this.table.addMouseListener(new MouseAdapter(){
 			public void mouseClicked(MouseEvent e){
 				if(e.getClickCount() == 2){
 					List<Track> tracks = tableModel.getSubList(
 						table.getSelectedRow(), table.getRowCount()
 					);
-						
+					
 					broadcast.fireControlSelect(tracks);
 					broadcast.fireControlPlay();
 				}
@@ -102,12 +127,13 @@ public class JotifyContentPanel extends JPanel implements HyperlinkListener, Pla
 			
 			public void mousePopup(MouseEvent e){
 				if(e.isPopupTrigger()){
-					JPopupMenu contextMenu = new JPopupMenu();
-					JMenuItem  playItem    = new JMenuItem("Play");
-					JMenuItem  queueItem   = new JMenuItem("Queue");
-					JMenuItem  browseItem  = new JMenuItem("Browse Album");
-					JMenuItem  uriItem     = new JMenuItem("Copy Spotify URI");
-					JMenuItem  linkItem    = new JMenuItem("Copy HTTP Link");
+					JPopupMenu contextMenu      = new JPopupMenu();
+					JMenuItem  playItem         = new JMenuItem("Play");
+					JMenuItem  queueItem        = new JMenuItem("Queue");
+					JMenuItem  browseArtistItem = new JMenuItem("Browse Artist");
+					JMenuItem  browseAlbumItem  = new JMenuItem("Browse Album");
+					JMenuItem  uriItem          = new JMenuItem("Copy Spotify URI");
+					JMenuItem  linkItem         = new JMenuItem("Copy HTTP Link");
 					
 					table.getSelectionModel().setSelectionInterval(
 						table.rowAtPoint(e.getPoint()),
@@ -133,13 +159,33 @@ public class JotifyContentPanel extends JPanel implements HyperlinkListener, Pla
 						}
 					});
 					
-					browseItem.addActionListener(new ActionListener(){
+					browseArtistItem.addActionListener(new ActionListener(){
 						public void actionPerformed(ActionEvent e){
-							Track track = tableModel.get(table.getSelectedRow());
-							Album album = jotify.browse(track.getAlbum());
-							
-							broadcast.fireClearSelection();
-							broadcast.fireBrowsedAlbum(album);
+							try{
+								Track track   = tableModel.get(table.getSelectedRow());
+								Artist artist = jotify.browse(track.getArtist());
+								
+								broadcast.fireClearSelection();
+								broadcast.fireBrowsedArtist(artist);
+							}
+							catch(TimeoutException ex){
+								ex.printStackTrace();
+							}
+						}
+					});
+					
+					browseAlbumItem.addActionListener(new ActionListener(){
+						public void actionPerformed(ActionEvent e){
+							try{
+								Track track = tableModel.get(table.getSelectedRow());
+								Album album = jotify.browse(track.getAlbum());
+								
+								broadcast.fireClearSelection();
+								broadcast.fireBrowsedAlbum(album);
+							}
+							catch(TimeoutException ex){
+								ex.printStackTrace();
+							}
 						}
 					});
 					
@@ -147,7 +193,7 @@ public class JotifyContentPanel extends JPanel implements HyperlinkListener, Pla
 						public void actionPerformed(ActionEvent e){
 							Track track = tableModel.get(table.getSelectedRow());
 							
-							StringSelection uri = new StringSelection(track.getURI());
+							StringSelection uri = new StringSelection(track.getLink().asString());
 							
 							Toolkit.getDefaultToolkit().getSystemClipboard().setContents(uri, uri);
 						}
@@ -157,7 +203,7 @@ public class JotifyContentPanel extends JPanel implements HyperlinkListener, Pla
 						public void actionPerformed(ActionEvent e){
 							Track track = tableModel.get(table.getSelectedRow());
 							
-							StringSelection uri = new StringSelection(track.getLink());
+							StringSelection uri = new StringSelection(track.getLink().asHTTPLink());
 							
 							Toolkit.getDefaultToolkit().getSystemClipboard().setContents(uri, uri);
 						}
@@ -167,7 +213,8 @@ public class JotifyContentPanel extends JPanel implements HyperlinkListener, Pla
 					contextMenu.addSeparator();
 					contextMenu.add(queueItem);
 					contextMenu.addSeparator();
-					contextMenu.add(browseItem);
+					contextMenu.add(browseArtistItem);
+					contextMenu.add(browseAlbumItem);
 					contextMenu.addSeparator();
 					contextMenu.add(uriItem);
 					contextMenu.add(linkItem);
@@ -210,7 +257,56 @@ public class JotifyContentPanel extends JPanel implements HyperlinkListener, Pla
 		this.add(this.scrollPane, BorderLayout.CENTER);
 	}
 	
-	public void showAlbum(Album album){
+	/* TODO: Beautify :-P */
+	public void showArtist(final Artist artist){
+		List<Track> tracks = new ArrayList<Track>();
+		
+		this.infoPane.setText(
+			"<html>" +
+			"	<table style=\"font: bold 12pt Dialog;\">" +
+			"		<tr>" +
+			"			<td valign=\"top\" style=\"width: 50%;\">" +
+			"				<span style=\"color: #ffffff;\">" +
+								artist.getName() +
+								"<div style=\"font: normal 10pt Dialog; color: #ffffff;\">" +
+								(artist.getBios().isEmpty()?"":artist.getBios().get(0).getText()) +
+								"</div>" +
+							"</span>" +
+			"			</td>" +
+			"		</tr>" +
+			"	</table>" +
+			"</html>"
+		);
+		
+		for(Album album : artist.getAlbums()){
+			if(album.getArtist().equals(artist)){
+				tracks.addAll(album.getTracks());
+			}
+		}
+		
+		this.showTracks(tracks);
+		
+		this.imageLabel.setIcon(this.coverImage);
+		this.imageLabel.setVisible(true);
+		
+		/* Load portrait. */
+		new Thread("Image-Loading-Thread"){
+			public void run(){
+				if(artist.getPortrait() != null){
+					try{
+						imageLabel.setIcon(new ImageIcon(
+							jotify.image(artist.getPortrait()))
+						);
+					}
+					catch(TimeoutException ex){
+						ex.printStackTrace();
+					}
+				}
+			}
+		}.start();
+	}
+	
+	public void showAlbum(final Album album){
 		this.infoPane.setText(
 			"<html>" +
 			"	<table style=\"font: bold 12pt Dialog;\">" +
@@ -229,11 +325,33 @@ public class JotifyContentPanel extends JPanel implements HyperlinkListener, Pla
 		);
 		
 		this.showTracks(album.getTracks());
+		
+		this.imageLabel.setIcon(this.coverImage);
+		this.imageLabel.setVisible(true);
+		
+		/* Load cover. */
+		if(album.getCover() != null){
+			new Thread("Image-Loading-Thread"){
+				public void run(){
+					try{
+						imageLabel.setIcon(new ImageIcon(
+							jotify.image(album.getCover()).getScaledInstance(200, 200, Image.SCALE_SMOOTH))
+						);
+					}
+					catch(TimeoutException ex){
+						ex.printStackTrace();
+					}
+				}
+			}.start();
+		}
 	}
 	
-	public void showResult(Result result){
+	public void showResult(final Result result){
 		Iterator<Artist> artists = result.getArtists().iterator();
 		Iterator<Album>  albums  = result.getAlbums().iterator();
+		
+		this.imageLabel.setIcon(this.coverImage);
+		this.imageLabel.setVisible(false);
 		
 		String artistsHtml = "";
 		String albumsHtml  = "";
@@ -287,16 +405,56 @@ public class JotifyContentPanel extends JPanel implements HyperlinkListener, Pla
 		this.showTracks(result.getTracks());
 	}
 	
-	public void showPlaylist(Playlist playlist){
-		this.infoPane.setText("");
-		
+	public void showPlaylist(final Playlist playlist){
 		this.showTracks(playlist.getTracks());
+		
+		/* Check for description. */
+		if(playlist.getDescription() != null){
+			this.infoPane.setText(
+				"<html>" +
+				"	<table style=\"font: bold 12pt Dialog;\">" +
+				"		<tr>" +
+				"			<td valign=\"top\" style=\"width: 50%;\">" +
+				"				<span style=\"color: #ffffff;\">" +
+									playlist.getDescription() +
+								"</span>" +
+				"			</td>" +
+				"		</tr>" +
+				"	</table>" +
+				"</html>"
+			);
+		}
+		else{
+			this.infoPane.setText("");
+		}
+		
+		this.imageLabel.setIcon(this.coverImage);
+		this.imageLabel.setVisible(true);
+		
+		/* Load picture. */
+		if(playlist.getPicture() != null){
+			new Thread("Image-Loading-Thread"){
+				public void run(){
+					try{
+						imageLabel.setIcon(new ImageIcon(
+							jotify.image(playlist.getPicture()).getScaledInstance(200, 200, Image.SCALE_SMOOTH))
+						);
+					}
+					catch(TimeoutException ex){
+						ex.printStackTrace();
+					}
+				}
+			}.start();
+		}
 		
 		this.isShowingQueue = false;
 	}
 	
-	public void showQueue(JotifyPlaybackQueue queue){
+	public void showQueue(final JotifyPlaybackQueue queue){
 		List<Track> tracks = new ArrayList<Track>();
+		
+		this.imageLabel.setIcon(this.coverImage);
+		this.imageLabel.setVisible(false);
 		
 		tracks.addAll(queue.getQueue());
 		tracks.addAll(queue.getTracks());
@@ -316,7 +474,10 @@ public class JotifyContentPanel extends JPanel implements HyperlinkListener, Pla
 		this.isShowingQueue = true;
 	}
 	
-	private void showTracks(List<Track> tracks){
+	private void showTracks(final List<Track> tracks){
+		this.imageLabel.setIcon(this.coverImage);
+		this.imageLabel.setVisible(false);
+		
 		this.tableModel.removeAll();
 		this.tableModel.addAll(tracks);
 		
@@ -325,19 +486,33 @@ public class JotifyContentPanel extends JPanel implements HyperlinkListener, Pla
 	
 	public void hyperlinkUpdate(final HyperlinkEvent e){
 		if(e.getEventType() == EventType.ACTIVATED){
-			String[] parts = e.getDescription().split(":", 2);
-			
-			if(parts[0].equals("artist")){
-				Result result = this.jotify.search(parts[1]);
+			try{
+				Link link = Link.create(e.getDescription());
 				
-				/* TODO: Do a browse query here, not a search. */
-				broadcast.fireSearchResultReceived(result);
+				if(link.isArtistLink()){
+					Artist artist = this.jotify.browseArtist(link.getId());
+					
+					broadcast.fireClearSelection();
+					broadcast.fireBrowsedArtist(artist);
+				}
+				else if(link.isAlbumLink()){
+					Album album = this.jotify.browseAlbum(link.getId());
+					
+					broadcast.fireClearSelection();
+					broadcast.fireBrowsedAlbum(album);
+				}
+				else if(link.isTrackLink()){
+					Track track = this.jotify.browseTrack(link.getId());
+					
+					broadcast.fireControlSelect(track);
+					broadcast.fireControlPlay();
+				}
 			}
-			else if(parts[0].equals("album")){
-				Album album = this.jotify.browseAlbum(parts[1]);
-				
-				broadcast.fireClearSelection();
-				broadcast.fireBrowsedAlbum(album);
+			catch(InvalidSpotifyURIException ex){
+				/* Ignore. */
+			}
+			catch(TimeoutException ex){
+				/* Ignore. */
 			}
 		}
 	}
@@ -354,9 +529,10 @@ public class JotifyContentPanel extends JPanel implements HyperlinkListener, Pla
 	
 	public void playlistUpdated(Playlist playlist){
 		/* TODO: compare with current playlist. */
-		if(!isShowingQueue){
+		/* TODO: if this playlist is selected. */
+		/*if(!isShowingQueue){
 			this.showTracks(playlist.getTracks());
-		}
+		}*/
 	}
 	
 	public void queueSelected(JotifyPlaybackQueue queue){
@@ -378,7 +554,7 @@ public class JotifyContentPanel extends JPanel implements HyperlinkListener, Pla
 	}
 	
 	public void browsedArtist(Artist artist){
-		/* TODO */
+		this.showArtist(artist);
 	}
 	
 	public void browsedAlbum(Album album){
