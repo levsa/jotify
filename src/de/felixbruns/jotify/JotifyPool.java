@@ -39,7 +39,7 @@ public class JotifyPool implements Jotify, Player {
 	}
 	
 	public JotifyPool(){
-		this(4);
+		this(2);
 	}
 	
 	public JotifyPool(int poolSize){
@@ -142,7 +142,7 @@ public class JotifyPool implements Jotify, Player {
 		/* Do nothing. */
 	}
 	
-	public User user(){
+	public User user() throws TimeoutException {
 		Jotify connection = this.getConnection();
 		
 		User user = connection.user();
@@ -152,7 +152,7 @@ public class JotifyPool implements Jotify, Player {
 		return user;
 	}
 	
-	public Result toplist(String type, String region, String username) {
+	public Result toplist(String type, String region, String username) throws TimeoutException {
 		Jotify connection = this.getConnection();
 		
 		Result result = connection.toplist(type, region, username);
@@ -162,7 +162,7 @@ public class JotifyPool implements Jotify, Player {
 		return result;
 	}
 	
-	public Result search(String query){
+	public Result search(String query) throws TimeoutException {
 		Jotify connection = this.getConnection();
 		
 		Result result = connection.search(query);
@@ -173,7 +173,7 @@ public class JotifyPool implements Jotify, Player {
 	}
 	
 	
-	public Image image(String id){
+	public Image image(String id) throws TimeoutException {
 		Jotify connection = this.getConnection();
 		
 		Image image = connection.image(id);
@@ -183,7 +183,7 @@ public class JotifyPool implements Jotify, Player {
 		return image;
 	}
 	
-	public Artist browse(Artist artist){
+	public Artist browse(Artist artist) throws TimeoutException {
 		Jotify connection = this.getConnection();
 		
 		artist = connection.browse(artist);
@@ -193,7 +193,7 @@ public class JotifyPool implements Jotify, Player {
 		return artist;
 	}
 	
-	public Album browse(Album album){
+	public Album browse(Album album) throws TimeoutException {
 		Jotify connection = this.getConnection();
 		
 		album = connection.browse(album);
@@ -203,27 +203,27 @@ public class JotifyPool implements Jotify, Player {
 		return album;
 	}
 	
-	public Result browse(Track track){
+	public Track browse(Track track) throws TimeoutException {
 		Jotify connection = this.getConnection();
 		
-		Result result = connection.browse(track);
+		Track result = connection.browse(track);
 		
 		this.releaseConnection(connection);
 		
 		return result;
 	}
 	
-	public Result browse(List<Track> tracks){
+	public List<Track> browse(List<Track> tracks) throws TimeoutException {
 		Jotify connection = this.getConnection();
 		
-		Result result = connection.browse(tracks);
+		List<Track> result = connection.browse(tracks);
 		
 		this.releaseConnection(connection);
 		
 		return result;
 	}
 	
-	public Album browseAlbum(String id){
+	public Album browseAlbum(String id) throws TimeoutException {
 		Jotify connection = this.getConnection();
 		
 		Album album = connection.browseAlbum(id);
@@ -233,7 +233,7 @@ public class JotifyPool implements Jotify, Player {
 		return album;
 	}
 	
-	public Artist browseArtist(String id){
+	public Artist browseArtist(String id) throws TimeoutException {
 		Jotify connection = this.getConnection();
 		
 		Artist artist = connection.browseArtist(id);
@@ -243,77 +243,151 @@ public class JotifyPool implements Jotify, Player {
 		return artist;
 	}
 	
-	public Result browseTrack(String id){
+	public Track browseTrack(String id) throws TimeoutException {
 		Jotify connection = this.getConnection();
 		
-		Result result = connection.browseTrack(id);
+		Track result = connection.browseTrack(id);
 		
 		this.releaseConnection(connection);
 		
 		return result;
 	}
 	
-	public Result browseTracks(List<String> tracks){
+	public List<Track> browseTracks(List<String> ids) throws TimeoutException {
 		Jotify connection = this.getConnection();
 		
-		Result result = connection.browseTracks(tracks);
+		List<Track> result = connection.browseTracks(ids);
 		
 		this.releaseConnection(connection);
 		
 		return result;
 	}
 	
-	public PlaylistContainer playlists(){
+	public PlaylistContainer playlistContainer() throws TimeoutException {
 		Jotify connection = this.getConnection();
 		
-		PlaylistContainer playlists = connection.playlists();
+		PlaylistContainer playlistContainer = connection.playlistContainer();
 		
 		this.releaseConnection(connection);
 		
-		return playlists;
+		return playlistContainer;
 	}
 	
-	public boolean playlistsAddPlaylist(PlaylistContainer playlists, Playlist playlist){
+	public boolean playlistContainerAddPlaylist(PlaylistContainer playlistContainer, Playlist playlist) throws TimeoutException {
 		Jotify connection = this.getConnection();
 		
-		boolean success = connection.playlistsAddPlaylist(playlists, playlist);
-		
-		this.releaseConnection(connection);
-		
-		return success;
-	}
-	
-	public boolean playlistsAddPlaylist(PlaylistContainer playlists, Playlist playlist, int position){
-		Jotify connection = this.getConnection();
-		
-		boolean success = connection.playlistsAddPlaylist(playlists, playlist, position);
+		boolean success = connection.playlistContainerAddPlaylist(playlistContainer, playlist);
 		
 		this.releaseConnection(connection);
 		
 		return success;
 	}
 	
-	public Playlist playlist(String id){
+	public boolean playlistContainerAddPlaylist(PlaylistContainer playlistContainer, Playlist playlist, int position) throws TimeoutException {
 		Jotify connection = this.getConnection();
 		
-		Playlist playlist = connection.playlist(id);
+		boolean success = connection.playlistContainerAddPlaylist(playlistContainer, playlist, position);
+		
+		this.releaseConnection(connection);
+		
+		return success;
+	}
+	
+	public boolean playlistContainerAddPlaylists(PlaylistContainer playlistContainer, List<Playlist> playlists, int position) throws TimeoutException {
+		Jotify connection = this.getConnection();
+		
+		boolean success = connection.playlistContainerAddPlaylists(playlistContainer, playlists, position);
+		
+		this.releaseConnection(connection);
+		
+		return success;
+	}
+	
+	public boolean playlistContainerRemovePlaylist(PlaylistContainer playlistContainer, int position) throws TimeoutException {
+		Jotify connection = this.getConnection();
+		
+		boolean success = connection.playlistContainerRemovePlaylist(playlistContainer, position);
+		
+		this.releaseConnection(connection);
+		
+		return success;
+	}
+	
+	public boolean playlistContainerRemovePlaylists(PlaylistContainer playlistContainer, int position, int count) throws TimeoutException {
+		Jotify connection = this.getConnection();
+		
+		boolean success = connection.playlistContainerRemovePlaylists(playlistContainer, position, count);
+		
+		this.releaseConnection(connection);
+		
+		return success;
+	}
+	
+	public Playlist playlist(String id, boolean cached) throws TimeoutException {
+		Jotify connection = this.getConnection();
+		
+		Playlist playlist = connection.playlist(id, cached);
 		
 		this.releaseConnection(connection);
 		
 		return playlist;
 	}
 	
-	public Playlist playlistCreate(String name, boolean collaborative){
+	public Playlist playlist(String id) throws TimeoutException {
+		return this.playlist(id, false);
+	}
+	
+	public Playlist playlistCreate(String name, boolean collaborative, String description, String picture) throws TimeoutException {
 		Jotify connection = this.getConnection();
 		
-		Playlist playlist = connection.playlistCreate(name, collaborative);
+		Playlist playlist = connection.playlistCreate(name, collaborative, description, picture);
 		
 		this.releaseConnection(connection);
 		
 		return playlist;
 	}
 	
-	public boolean playlistAddTrack(Playlist playlist, Track track, int position){
+	public Playlist playlistCreate(String name) throws TimeoutException {
+		Jotify connection = this.getConnection();
+		
+		Playlist playlist = connection.playlistCreate(name);
+		
+		this.releaseConnection(connection);
+		
+		return playlist;
+	}
+	
+	public Playlist playlistCreate(Album sourceAlbum) throws TimeoutException {
+		Jotify connection = this.getConnection();
+		
+		Playlist playlist = connection.playlistCreate(sourceAlbum);
+		
+		this.releaseConnection(connection);
+		
+		return playlist;
+	}
+	
+	public boolean playlistDestroy(Playlist playlist) throws TimeoutException {
+		Jotify connection = this.getConnection();
+		
+		boolean success = connection.playlistDestroy(playlist);
+		
+		this.releaseConnection(connection);
+		
+		return success;
+	}
+	
+	public boolean playlistAddTrack(Playlist playlist, Track track) throws TimeoutException {
+		Jotify connection = this.getConnection();
+		
+		boolean success = connection.playlistAddTrack(playlist, track);
+		
+		this.releaseConnection(connection);
+		
+		return success;
+	}
+	
+	public boolean playlistAddTrack(Playlist playlist, Track track, int position) throws TimeoutException {
 		Jotify connection = this.getConnection();
 		
 		boolean success = connection.playlistAddTrack(playlist, track, position);
@@ -323,7 +397,7 @@ public class JotifyPool implements Jotify, Player {
 		return success;
 	}
 	
-	public boolean playlistAddTracks(Playlist playlist, List<Track> tracks, int position){
+	public boolean playlistAddTracks(Playlist playlist, List<Track> tracks, int position) throws TimeoutException {
 		Jotify connection = this.getConnection();
 		
 		boolean success = connection.playlistAddTracks(playlist, tracks, position);
@@ -333,7 +407,7 @@ public class JotifyPool implements Jotify, Player {
 		return success;
 	}
 	
-	public boolean playlistRemoveTrack(Playlist playlist, int position){
+	public boolean playlistRemoveTrack(Playlist playlist, int position) throws TimeoutException {
 		Jotify connection = this.getConnection();
 		
 		boolean success = connection.playlistRemoveTrack(playlist, position);
@@ -343,7 +417,7 @@ public class JotifyPool implements Jotify, Player {
 		return success;
 	}
 	
-	public boolean playlistRemoveTracks(Playlist playlist, int position, int count){
+	public boolean playlistRemoveTracks(Playlist playlist, int position, int count) throws TimeoutException {
 		Jotify connection = this.getConnection();
 		
 		boolean success = connection.playlistRemoveTracks(playlist, position, count);
@@ -353,7 +427,7 @@ public class JotifyPool implements Jotify, Player {
 		return success;
 	}
 	
-	public boolean playlistRename(Playlist playlist, String name){
+	public boolean playlistRename(Playlist playlist, String name) throws TimeoutException {
 		Jotify connection = this.getConnection();
 		
 		boolean success = connection.playlistRename(playlist, name);
@@ -363,7 +437,7 @@ public class JotifyPool implements Jotify, Player {
 		return success;
 	}
 	
-	public boolean playlistSetCollaborative(Playlist playlist, boolean collaborative){
+	public boolean playlistSetCollaborative(Playlist playlist, boolean collaborative) throws TimeoutException {
 		Jotify connection = this.getConnection();
 		
 		boolean success = connection.playlistSetCollaborative(playlist, collaborative);
@@ -373,7 +447,17 @@ public class JotifyPool implements Jotify, Player {
 		return success;
 	}
 	
-	public void play(Track track, PlaybackListener listener){
+	public boolean playlistSetInformation(Playlist playlist, String description, String picture) throws TimeoutException {
+		Jotify connection = this.getConnection();
+		
+		boolean success = connection.playlistSetInformation(playlist, description, picture);
+		
+		this.releaseConnection(connection);
+		
+		return success;
+	}
+	
+	public void play(Track track, PlaybackListener listener) throws TimeoutException {
 		if(this.playConnection != null){
 			this.playConnection.stop();
 			

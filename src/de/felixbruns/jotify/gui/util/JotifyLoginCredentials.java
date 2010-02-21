@@ -35,6 +35,10 @@ public class JotifyLoginCredentials {
 		return this.password;
 	}
 	
+	public void setPassword(char[] password){
+		this.password = new String(password);
+	}
+	
 	public void setPassword(String password){
 		this.password = password;
 	}
@@ -45,5 +49,9 @@ public class JotifyLoginCredentials {
 	
 	public void setRemember(boolean remember){
 		this.remember = remember;
+	}
+	
+	public static JotifyLoginCredentials emptyLoginCredentials(){
+		return new JotifyLoginCredentials(null, (String)null);
 	}
 }

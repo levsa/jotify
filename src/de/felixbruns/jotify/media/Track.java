@@ -1,10 +1,9 @@
 package de.felixbruns.jotify.media;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 
-import de.felixbruns.jotify.util.SpotifyURI;
-import de.felixbruns.jotify.util.XMLElement;
 
 /**
  * Holds information about a track.
@@ -60,6 +59,11 @@ public class Track extends Media {
 	private List<Track> similarTracks;
 	
 	/**
+	 * If this track is explicit.
+	 */
+	private boolean explicit;
+	
+	/**
 	 * Creates an empty {@link Track} object.
 	 */
 	public Track(){
@@ -77,7 +81,7 @@ public class Track extends Media {
 	/**
 	 * Creates a {@link Track} object with the specified {@code id}.
 	 * 
-	 * @param id Id of the track.
+	 * @param id A 32-character hex string or a Spotify URI.
 	 */
 	public Track(String id){
 		this(id, null, null, null);
@@ -87,7 +91,7 @@ public class Track extends Media {
 	 * Creates a {@link Track} object with the specified {@code id},
 	 * {@code title},{@code artist} and {@code album}.
 	 * 
-	 * @param id     Id of the track.
+	 * @param id     A 32-character hex string or a Spotify URI.
 	 * @param title  Title of the track.
 	 * @param artist Artist of the track.
 	 * @param album  Album of the track.
@@ -108,21 +112,13 @@ public class Track extends Media {
 	}
 	
 	/**
-	 * Get the tracks Spotify URI.
+	 * Create a link from this track.
 	 * 
-	 * @return A Spotify URI (e.g. {@code spotify:track:<base62-encoded-id>})
+	 * @return A {@link Link} object which can then
+	 * 		   be used to retreive the Spotify URI.
 	 */
-	public String getURI(){
-		return "spotify:track:" + SpotifyURI.toURI(this.id);
-	}
-	
-	/**
-	 * Get the tracks Spotify URI as a HTTP-link.
-	 * 
-	 * @return A link which redirects to a Spotify URI.
-	 */
-	public String getLink(){
-		return "http://open.spotify.com/track/" + SpotifyURI.toURI(this.id);
+	public Link getLink(){
+		return Link.create(this);
 	}
 	
 	/**
@@ -276,6 +272,35 @@ public class Track extends Media {
 	}
 	
 	/**
+	 * Get a file of this track that matches the given bitrate best.
+	 * 
+	 * @param bitrate A bitrate to match files against (e.g. 160000,
+	 * 				  to choose a 160 kbps file).
+	 * 
+	 * @return A {@link File} object or null if no files are available.
+	 */
+	public File getFile(int bitrate){
+		File result = null;
+		int  min    = -1;
+		int  diff;
+		
+		/* Make sure files are sorted (highest bitrate last). */
+		Collections.sort(this.files);
+		
+		/* Pick the best-match. */
+		for(File file : this.files){
+			diff = Math.abs(file.getBitrate() - bitrate);
+			
+			if(min == -1 || diff <= min){
+				min    = diff;
+				result = file;
+			}
+		}
+		
+		return result;
+	}
+	
+	/**
 	 * Get the tracks cover image identifier.
 	 * 
 	 * @return A 32-character image identifier.
@@ -312,92 +337,23 @@ public class Track extends Media {
 	}
 	
 	/**
-	 * Create a {@link Track} object from an {@link XMLElement} holding track information.
+	 * Return if this track is explicit.
 	 * 
-	 * @param trackElement An {@link XMLElement} holding track information.
-	 * 
-	 * @return A {@link Track} object.
+	 * @return A boolean value.
 	 */
-	public static Track fromXMLElement(XMLElement trackElement){
-		Track track = new Track();
-		
-		/* Set id. */
-		if(trackElement.hasChild("id")){
-			track.id = trackElement.getChildText("id");
-		}
-		
-		/* Set title. */
-		if(trackElement.hasChild("title")){
-			track.title = trackElement.getChildText("title");
-		}
-		
-		/* Set artist. */
-		if(trackElement.hasChild("artist-id") && trackElement.hasChild("artist")){
-			track.artist = new Artist(
-				trackElement.getChildText("artist-id"),
-				trackElement.getChildText("artist")
-			);
-		}
-		
-		/* Set album. */
-		if(trackElement.hasChild("album-id") && trackElement.hasChild("album")){
-			track.album = new Album(
-				trackElement.getChildText("album-id"),
-				trackElement.getChildText("album"),
-				track.artist
-			);
-		}
-		
-		/* Set year. */
-		if(trackElement.hasChild("year")){
-			try{
-				track.year = Integer.parseInt(trackElement.getChildText("year"));
-			}
-			catch(NumberFormatException e){
-				track.year = -1;
-			}
-		}
-		
-		/* Set track number. */
-		if(trackElement.hasChild("track-number")){
-			track.trackNumber = Integer.parseInt(trackElement.getChildText("track-number"));
-		}
-		
-		/* Set length. */
-		if(trackElement.hasChild("length")){
-			track.length = Integer.parseInt(trackElement.getChildText("length"));
-		}
-		
-		/* Set files. */
-		if(trackElement.hasChild("files")){
-			for(XMLElement fileElement : trackElement.getChild("files").getChildren()){
-				File file = new File(
-					fileElement.getAttribute("id"),
-					fileElement.getAttribute("format")
-				);
-				
-				track.files.add(file);
-			}
-		}
-		
-		/* Set cover. */
-		if(trackElement.hasChild("cover")){
-			String value = trackElement.getChildText("cover");
-			
-			if(!value.isEmpty()){
-				track.cover = value;
-			}
-		}
-		
-		/* Set popularity. */
-		if(trackElement.hasChild("popularity")){
-			track.popularity = Float.parseFloat(trackElement.getChildText("popularity"));
-		}
-		
-		//TODO: similar-tracks
-		
-		return track;
+	public boolean isExplicit(){
+		return this.explicit;
 	}
+	
+	/**
+	 * Set if this track is explicit.
+	 * 
+	 * @param explicit A boolean value.
+	 */
+	public void setExplicit(boolean explicit){
+		this.explicit = explicit;
+	}
+		
 	
 	/**
 	 * Determines if an object is equal to this {@link Track} object.
@@ -411,7 +367,15 @@ public class Track extends Media {
 		if(o instanceof Track){
 			Track t = (Track)o;
 			
-			return this.id.equals(t.id);
+			if(this.id.equals(t.id)){
+				return true;
+			}
+			
+			for(String id : this.redirects){
+				if(id.equals(t.id)){
+					return true;
+				}
+			}
 		}
 		
 		return false;

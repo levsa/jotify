@@ -3,8 +3,6 @@ package de.felixbruns.jotify.media;
 import java.util.ArrayList;
 import java.util.List;
 
-import de.felixbruns.jotify.util.SpotifyURI;
-import de.felixbruns.jotify.util.XMLElement;
 
 /**
  * Holds information about an artist.
@@ -20,9 +18,9 @@ public class Artist extends Media {
 	private String name;
 	
 	/**
-	 * The identifier for this artists portrait image (32-character string).
+	 * The identifier for this artists portrait image (40-character string).
 	 */
-	private Image portrait;
+	private String portrait;
 	
 	/**
 	 * A {@link List} of genres.
@@ -65,7 +63,7 @@ public class Artist extends Media {
 	/**
 	 * Creates an {@link Artist} object with the specified {@code id}.
 	 * 
-	 * @param id Id of the artist.
+	 * @param id A 32-character hex string or a Spotify URI.
 	 */
 	public Artist(String id){
 		this(id, null);
@@ -74,7 +72,7 @@ public class Artist extends Media {
 	/**
 	 * Creates an {@link Artist} object with the specified {@code id} and {@code name}.
 	 * 
-	 * @param id   Id of the artist.
+	 * @param id   A 32-character hex string or a Spotify URI.
 	 * @param name Name of the artist or {@code null}.
 	 */
 	public Artist(String id, String name){
@@ -91,21 +89,13 @@ public class Artist extends Media {
 	}
 	
 	/**
-	 * Get the artists Spotify URI.
+	 * Create a link from this artist.
 	 * 
-	 * @return A Spotify URI (e.g. {@code spotify:artist:<base62-encoded-id>})
+	 * @return A {@link Link} object which can then
+	 * 		   be used to retreive the Spotify URI.
 	 */
-	public String getURI(){
-		return "spotify:artist:" + SpotifyURI.toURI(this.id);
-	}
-	
-	/**
-	 * Get the artists Spotify URI as a HTTP-link.
-	 * 
-	 * @return A link which redirects to a Spotify URI.
-	 */
-	public String getLink(){
-		return "http://open.spotify.com/artist/" + SpotifyURI.toURI(this.id);
+	public Link getLink(){
+		return Link.create(this);
 	}
 	
 	/**
@@ -129,18 +119,18 @@ public class Artist extends Media {
 	/**
 	 * Get the artists portrait image identifier.
 	 * 
-	 * @return An {@link Image} object.
+	 * @return A 40-character hex string.
 	 */
-	public Image getPortrait(){
+	public String getPortrait(){
 		return this.portrait;
 	}
 	
 	/**
 	 * Set the artists portrait image identifier.
 	 * 
-	 * @param portrait An {@link Image} object.
+	 * @param portrait A 40-character hex string.
 	 */
-	public void setPortrait(Image portrait){
+	public void setPortrait(String portrait){
 		this.portrait = portrait;
 	}
 	
@@ -235,53 +225,6 @@ public class Artist extends Media {
 	}
 	
 	/**
-	 * Create an {@link Artist} object from an {@link XMLElement} holding artist information.
-	 * 
-	 * @param artistElement An {@link XMLElement} holding artist information.
-	 * 
-	 * @return An {@link Artist} object.
-	 */
-	public static Artist fromXMLElement(XMLElement artistElement){
-		/* Create an empty artist object. */
-		Artist artist = new Artist();
-		
-		/* Set identifier. */
-		if(artistElement.hasChild("id")){
-			artist.id = artistElement.getChildText("id");
-		}
-		
-		/* Set name. */
-		if(artistElement.hasChild("name")){
-			artist.name = artistElement.getChildText("name");
-		}
-		
-		/* Set portrait. */
-		if(artistElement.hasChild("portrait") && artistElement.getChild("portrait").hasChild("id")){
-			String id = artistElement.getChild("portrait").getChildText("id");
-			
-			if(!id.isEmpty()){
-				artist.portrait = new Image(id, -1, -1);
-			}
-		}
-		
-		/* Set popularity. */
-		if(artistElement.hasChild("popularity")){
-			artist.popularity = Float.parseFloat(artistElement.getChildText("popularity"));
-		}
-		
-		/* Set similar artists. */
-		if(artistElement.hasChild("similar-artists")){
-			for(XMLElement similarArtistElement : artistElement.getChild("similar-artists").getChildren()){
-				artist.similarArtists.add(Artist.fromXMLElement(similarArtistElement));
-			}
-		}
-		
-		/* TODO: bios, genres, years-active, albums, ... */
-		
-		return artist;
-	}
-	
-	/**
 	 * Determines if an object is equal to this {@link Artist} object.
 	 * If both objects are {@link Artist} objects, it will compare their identifiers.
 	 * 
@@ -293,7 +236,15 @@ public class Artist extends Media {
 		if(o instanceof Artist){
 			Artist a = (Artist)o;
 			
-			return this.id.equals(a.id);
+			if(this.id.equals(a.id)){
+				return true;
+			}
+			
+			for(String id : this.redirects){
+				if(id.equals(a.id)){
+					return true;
+				}
+			}
 		}
 		
 		return false;
